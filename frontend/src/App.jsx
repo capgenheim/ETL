@@ -12,6 +12,7 @@ import UploadSectionPage from './pages/transformation/UploadSectionPage';
 import CanvasListPage from './pages/transformation/CanvasListPage';
 import CreatePackagePage from './pages/transformation/CreatePackagePage';
 import PackageListPage from './pages/transformation/PackageListPage';
+import PackageMappingPage from './pages/transformation/PackageMappingPage';
 import AuditPage from './pages/AuditPage';
 
 function App() {
@@ -39,6 +40,8 @@ function App() {
                                 <Route path="/transformation/canvas-list" element={<CanvasListPage />} />
                                 <Route path="/transformation/create-package" element={<CreatePackagePage />} />
                                 <Route path="/transformation/package-list" element={<PackageListPage />} />
+                                <Route path="/transformation/packages/:id/mapping" element={<PackageMappingPage />} />
+                                <Route path="/transformation/packages/:id/edit" element={<CreatePackagePage />} />
 
                                 {/* Audit Panel */}
                                 <Route path="/audit" element={<AuditPage />} />

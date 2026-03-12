@@ -300,3 +300,270 @@ class TestFileListAndDeleteAPI(TestCase):
         resp = self.client.delete(f'/api/transformation/files/{self.source_file.id}/')
         self.assertEqual(resp.status_code, 204)
         self.assertFalse(UploadedFile.objects.filter(id=self.source_file.id).exists())
+
+
+# ─── Package CRUD Tests ────────────────────────────────────────────────
+
+@override_settings(MEDIA_ROOT=TEMP_MEDIA)
+class TestPackageCRUDAPI(TestCase):
+    def setUp(self):
+        from oauth2_provider.models import Application, AccessToken
+        from django.utils import timezone
+        import datetime
+
+        self.user = User.objects.create_user(
+            username='pkguser', email='pkguser@etl.local', password='Test@12345',
+            first_name='John', last_name='Doe',
+        )
+        self.app = Application.objects.create(
+            name='test-app-pkg', client_type=Application.CLIENT_CONFIDENTIAL,
+            authorization_grant_type=Application.GRANT_PASSWORD, user=self.user,
+        )
+        self.token = AccessToken.objects.create(
+            user=self.user, application=self.app,
+            token='test-token-pkg-789',
+            expires=timezone.now() + datetime.timedelta(hours=1),
+            scope='read write',
+        )
+        self.client = APIClient()
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token.token}')
+
+        # Seed source and canvas files
+        self.source = UploadedFile.objects.create(
+            file_type='source', original_filename='bank.csv', file_format='csv',
+            headers_json=['Date', 'Description', 'Amount', 'Balance'],
+            field_count=4, uploaded_by=self.user,
+        )
+        self.canvas = UploadedFile.objects.create(
+            file_type='canvas', original_filename='output.xlsx', file_format='xlsx',
+            headers_json=['TransDate', 'Desc', 'Value'],
+            field_count=3, uploaded_by=self.user,
+        )
+
+    def _create_package(self, **overrides):
+        """Helper to create a package via API."""
+        data = {
+            'name': 'Test Package',
+            'file_pattern': 'MBB_*.csv',
+            'source_file': self.source.id,
+            'canvas_file': self.canvas.id,
+            'input_format': 'csv',
+            'output_format': 'xlsx',
+            'output_prefix': 'mbb_output_',
+            'batch_mode': 'instant',
+            'batch_interval_minutes': 0,
+        }
+        data.update(overrides)
+        return self.client.post('/api/transformation/packages/create/', data, format='json')
+
+    # ── Create ──
+
+    def test_create_package(self):
+        resp = self._create_package()
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['name'], 'Test Package')
+        self.assertEqual(resp.data['file_pattern'], 'MBB_*.csv')
+        self.assertEqual(resp.data['status'], 'inactive')
+        self.assertEqual(resp.data['mapping_status'], 'unmapped')
+        self.assertEqual(resp.data['source_file_name'], 'bank.csv')
+        self.assertEqual(resp.data['canvas_file_name'], 'output.xlsx')
+        self.assertEqual(resp.data['created_by_name'], 'John Doe')
+        self.assertEqual(resp.data['created_by_email'], 'pkguser@etl.local')
+
+    def test_create_package_scheduled(self):
+        resp = self._create_package(batch_mode='scheduled', batch_interval_minutes=120)
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['batch_mode'], 'scheduled')
+        self.assertEqual(resp.data['batch_interval_minutes'], 120)
+
+    def test_create_package_missing_name(self):
+        resp = self._create_package(name='')
+        self.assertEqual(resp.status_code, 400)
+
+    # ── List ──
+
+    def test_list_packages(self):
+        self._create_package(name='Package A')
+        self._create_package(name='Package B')
+        resp = self.client.get('/api/transformation/packages/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 2)
+
+    def test_list_packages_filter_status(self):
+        self._create_package(name='Package A')
+        resp = self.client.get('/api/transformation/packages/?status=inactive')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 1)
+        resp2 = self.client.get('/api/transformation/packages/?status=active')
+        self.assertEqual(len(resp2.data), 0)
+
+    # ── Detail / Update / Delete ──
+
+    def test_get_package_detail(self):
+        create_resp = self._create_package()
+        pkg_id = create_resp.data['id']
+        resp = self.client.get(f'/api/transformation/packages/{pkg_id}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['name'], 'Test Package')
+        # Check source/canvas headers are included
+        self.assertEqual(resp.data['source_headers'], ['Date', 'Description', 'Amount', 'Balance'])
+        self.assertEqual(resp.data['canvas_headers'], ['TransDate', 'Desc', 'Value'])
+
+    def test_update_package(self):
+        create_resp = self._create_package()
+        pkg_id = create_resp.data['id']
+        resp = self.client.patch(
+            f'/api/transformation/packages/{pkg_id}/',
+            {'name': 'Updated Package', 'output_prefix': 'new_prefix_'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['name'], 'Updated Package')
+        self.assertEqual(resp.data['output_prefix'], 'new_prefix_')
+
+    def test_delete_package(self):
+        create_resp = self._create_package()
+        pkg_id = create_resp.data['id']
+        resp = self.client.delete(f'/api/transformation/packages/{pkg_id}/')
+        self.assertEqual(resp.status_code, 204)
+
+    # ── Status Control ──
+
+    def test_start_package(self):
+        create_resp = self._create_package()
+        pkg_id = create_resp.data['id']
+        resp = self.client.post(f'/api/transformation/packages/{pkg_id}/start/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['status'], 'active')
+
+    def test_pause_package(self):
+        create_resp = self._create_package()
+        pkg_id = create_resp.data['id']
+        # Start first
+        self.client.post(f'/api/transformation/packages/{pkg_id}/start/')
+        resp = self.client.post(f'/api/transformation/packages/{pkg_id}/pause/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['status'], 'paused')
+
+    def test_stop_package(self):
+        create_resp = self._create_package()
+        pkg_id = create_resp.data['id']
+        self.client.post(f'/api/transformation/packages/{pkg_id}/start/')
+        resp = self.client.post(f'/api/transformation/packages/{pkg_id}/stop/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['status'], 'inactive')
+
+    def test_invalid_package_action(self):
+        create_resp = self._create_package()
+        pkg_id = create_resp.data['id']
+        resp = self.client.post(f'/api/transformation/packages/{pkg_id}/restart/')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_package_not_found(self):
+        resp = self.client.post('/api/transformation/packages/99999/start/')
+        self.assertEqual(resp.status_code, 404)
+
+
+# ─── Field Mapping Tests ───────────────────────────────────────────────
+
+@override_settings(MEDIA_ROOT=TEMP_MEDIA)
+class TestFieldMappingAPI(TestCase):
+    def setUp(self):
+        from oauth2_provider.models import Application, AccessToken
+        from django.utils import timezone
+        from apps.transformation.models import Package
+        import datetime
+
+        self.user = User.objects.create_user(
+            username='mapper', email='mapper@etl.local', password='Test@12345',
+        )
+        self.app = Application.objects.create(
+            name='test-app-map', client_type=Application.CLIENT_CONFIDENTIAL,
+            authorization_grant_type=Application.GRANT_PASSWORD, user=self.user,
+        )
+        self.token = AccessToken.objects.create(
+            user=self.user, application=self.app,
+            token='test-token-map-101',
+            expires=timezone.now() + datetime.timedelta(hours=1),
+            scope='read write',
+        )
+        self.client = APIClient()
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token.token}')
+
+        self.source = UploadedFile.objects.create(
+            file_type='source', original_filename='src.csv', file_format='csv',
+            headers_json=['ColA', 'ColB', 'ColC', 'ColD'],
+            field_count=4, uploaded_by=self.user,
+        )
+        self.canvas = UploadedFile.objects.create(
+            file_type='canvas', original_filename='out.csv', file_format='csv',
+            headers_json=['TargetX', 'TargetY', 'TargetZ'],
+            field_count=3, uploaded_by=self.user,
+        )
+        self.package = Package.objects.create(
+            name='Map Test Pkg', file_pattern='TEST_*.csv',
+            source_file=self.source, canvas_file=self.canvas,
+            input_format='csv', output_format='csv', output_prefix='test_',
+            batch_mode='instant', created_by=self.user,
+        )
+
+    def test_save_mappings(self):
+        mappings = [
+            {'source_header': 'ColA', 'canvas_header': 'TargetX', 'order': 0},
+            {'source_header': 'ColB', 'canvas_header': 'TargetY', 'order': 1},
+            {'source_header': 'ColC', 'canvas_header': 'TargetZ', 'order': 2},
+        ]
+        resp = self.client.post(
+            f'/api/transformation/packages/{self.package.id}/mappings/',
+            mappings, format='json',
+        )
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(len(resp.data), 3)
+        # Verify mapping_status changed to mapped
+        self.package.refresh_from_db()
+        self.assertEqual(self.package.mapping_status, 'mapped')
+
+    def test_list_mappings(self):
+        from apps.transformation.models import FieldMapping
+        FieldMapping.objects.create(
+            package=self.package, source_header='ColA',
+            canvas_header='TargetX', order=0,
+        )
+        resp = self.client.get(f'/api/transformation/packages/{self.package.id}/mappings/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 1)
+        self.assertEqual(resp.data[0]['source_header'], 'ColA')
+
+    def test_replace_mappings(self):
+        """Saving new mappings should replace existing ones."""
+        from apps.transformation.models import FieldMapping
+        FieldMapping.objects.create(
+            package=self.package, source_header='ColA',
+            canvas_header='TargetX', order=0,
+        )
+        # Replace with different mappings
+        new_mappings = [
+            {'source_header': 'ColD', 'canvas_header': 'TargetX', 'order': 0},
+            {'source_header': 'ColC', 'canvas_header': 'TargetZ', 'order': 1},
+        ]
+        resp = self.client.post(
+            f'/api/transformation/packages/{self.package.id}/mappings/',
+            new_mappings, format='json',
+        )
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(len(resp.data), 2)
+        # Old mapping should be gone
+        self.assertEqual(FieldMapping.objects.filter(package=self.package).count(), 2)
+
+    def test_invalid_mapping_format(self):
+        """Sending non-list should return 400."""
+        resp = self.client.post(
+            f'/api/transformation/packages/{self.package.id}/mappings/',
+            {'source_header': 'ColA', 'canvas_header': 'TargetX'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_mapping_not_found_package(self):
+        resp = self.client.get('/api/transformation/packages/99999/mappings/')
+        self.assertEqual(resp.status_code, 404)

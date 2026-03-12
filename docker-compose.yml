@@ -55,8 +55,12 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./backend:/app
+      - ./trfm_inbound:/data/trfm_inbound
+      - ./trfm_outbound:/data/trfm_outbound
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - etl-network
@@ -99,6 +103,73 @@ services:
       - "${MAIL_PORT:-1025}:1025"
     networks:
       - etl-network
+
+  # ============================================
+  # Redis (Celery Broker)
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: etl-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - etl-network
+
+  # ============================================
+  # Celery Worker (Async File Processing)
+  # ============================================
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: etl-celery-worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./backend:/app
+      - ./trfm_inbound:/data/trfm_inbound
+      - ./trfm_outbound:/data/trfm_outbound
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - etl-network
+    command: celery -A config.celery worker -l info --concurrency=4
+
+  # ============================================
+  # Celery Beat (Scheduled Task Scheduler)
+  # ============================================
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: etl-celery-beat
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./backend:/app
+      - ./trfm_inbound:/data/trfm_inbound
+      - ./trfm_outbound:/data/trfm_outbound
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - etl-network
+    command: celery -A config.celery beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
 
 # ============================================
 # Volumes & Networks

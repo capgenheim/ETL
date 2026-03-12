@@ -3,8 +3,11 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import UploadedFile
-from .serializers import UploadedFileSerializer, FileUploadSerializer
+from .models import UploadedFile, Package, FieldMapping
+from .serializers import (
+    UploadedFileSerializer, FileUploadSerializer,
+    PackageSerializer, FieldMappingSerializer,
+)
 from .services import extract_headers, HeaderExtractionError
 
 
@@ -100,3 +103,120 @@ class UploadedFileDeleteView(generics.DestroyAPIView):
 
     def get_queryset(self):
         return UploadedFile.objects.filter(uploaded_by=self.request.user)
+
+
+# ─── Package CRUD ──────────────────────────────────────────────────────
+
+class PackageCreateView(generics.CreateAPIView):
+    """POST: Create a new package."""
+    serializer_class = PackageSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+
+class PackageListView(generics.ListAPIView):
+    """GET: List all packages for the current user."""
+    serializer_class = PackageSerializer
+
+    def get_queryset(self):
+        qs = Package.objects.filter(created_by=self.request.user)
+        pkg_status = self.request.query_params.get('status')
+        if pkg_status:
+            qs = qs.filter(status=pkg_status)
+        mapping = self.request.query_params.get('mapping_status')
+        if mapping:
+            qs = qs.filter(mapping_status=mapping)
+        return qs
+
+
+class PackageDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """GET/PUT/PATCH/DELETE: Retrieve, update, or delete a package."""
+    serializer_class = PackageSerializer
+
+    def get_queryset(self):
+        return Package.objects.filter(created_by=self.request.user)
+
+
+class PackageStatusView(APIView):
+    """POST: Change package status (start/pause/stop)."""
+
+    VALID_ACTIONS = {
+        'start': Package.Status.ACTIVE,
+        'pause': Package.Status.PAUSED,
+        'stop': Package.Status.INACTIVE,
+    }
+
+    def post(self, request, pk, action):
+        if action not in self.VALID_ACTIONS:
+            return Response(
+                {'error': f'Invalid action: {action}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            package = Package.objects.get(pk=pk, created_by=request.user)
+        except Package.DoesNotExist:
+            return Response(
+                {'error': 'Package not found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        package.status = self.VALID_ACTIONS[action]
+        package.save(update_fields=['status', 'updated_at'])
+        return Response(PackageSerializer(package).data)
+
+
+# ─── Field Mapping ─────────────────────────────────────────────────────
+
+class FieldMappingListView(APIView):
+    """
+    GET: List mappings for a package.
+    POST: Bulk save/replace all mappings for a package.
+    """
+
+    def get(self, request, pk):
+        try:
+            package = Package.objects.get(pk=pk, created_by=request.user)
+        except Package.DoesNotExist:
+            return Response({'error': 'Package not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        mappings = package.field_mappings.all()
+        return Response(FieldMappingSerializer(mappings, many=True).data)
+
+    def post(self, request, pk):
+        """Bulk replace all mappings: expects a list of {source_header, canvas_header, order}."""
+        try:
+            package = Package.objects.get(pk=pk, created_by=request.user)
+        except Package.DoesNotExist:
+            return Response({'error': 'Package not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        mappings_data = request.data
+        if not isinstance(mappings_data, list):
+            return Response(
+                {'error': 'Expected a list of mappings'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate all before saving
+        serializer = FieldMappingSerializer(data=mappings_data, many=True)
+        serializer.is_valid(raise_exception=True)
+
+        # Replace existing mappings
+        package.field_mappings.all().delete()
+        for idx, item in enumerate(serializer.validated_data):
+            FieldMapping.objects.create(
+                package=package,
+                source_header=item['source_header'],
+                canvas_header=item['canvas_header'],
+                order=item.get('order', idx),
+            )
+
+        # Update mapping status
+        package.mapping_status = Package.MappingStatus.MAPPED
+        package.save(update_fields=['mapping_status', 'updated_at'])
+
+        return Response(
+            FieldMappingSerializer(package.field_mappings.all(), many=True).data,
+            status=status.HTTP_201_CREATED,
+        )

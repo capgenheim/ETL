@@ -37,3 +37,6 @@ docker-data/
 
 # Database
 *.sql.bak
+
+# Test files for mapping
+testfilesmapping/

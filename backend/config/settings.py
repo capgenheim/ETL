@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'oauth2_provider',
+    'django_celery_beat',
 
     # Local apps
     'apps.accounts',
@@ -174,3 +175,16 @@ if not DEBUG:
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
+
+# ===== Celery (Redis) =====
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://redis:6379/0')
+CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://redis:6379/0')
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+# ===== File Processing Paths =====
+TRFM_INBOUND_DIR = os.environ.get('TRFM_INBOUND_DIR', '/data/trfm_inbound')
+TRFM_OUTBOUND_DIR = os.environ.get('TRFM_OUTBOUND_DIR', '/data/trfm_outbound')

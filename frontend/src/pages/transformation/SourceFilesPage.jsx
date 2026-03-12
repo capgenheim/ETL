@@ -13,6 +13,7 @@ import {
     Snackbar,
     Alert,
     Fade,
+    TablePagination,
 } from '@mui/material';
 import {
     Description as CsvIcon,
@@ -222,10 +223,13 @@ function FileRow({ file, index, onDelete }) {
 }
 
 /* ─── Main Page ─────────────────────────────────────────────────── */
+const ROWS_PER_PAGE = 20;
+
 export default function SourceFilesPage() {
     const [files, setFiles] = useState([]);
     const [search, setSearch] = useState('');
     const [loading, setLoading] = useState(true);
+    const [page, setPage] = useState(0);
     const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
 
     const loadFiles = useCallback(async () => {
@@ -256,6 +260,8 @@ export default function SourceFilesPage() {
         f.original_filename.toLowerCase().includes(search.toLowerCase())
     );
 
+    const paginatedFiles = filtered.slice(page * ROWS_PER_PAGE, page * ROWS_PER_PAGE + ROWS_PER_PAGE);
+
     return (
         <Box>
             {/* Header */}
@@ -284,7 +290,7 @@ export default function SourceFilesPage() {
                 size="small"
                 placeholder="Search source files..."
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => { setSearch(e.target.value); setPage(0); }}
                 InputProps={{
                     startAdornment: (
                         <InputAdornment position="start">
@@ -354,8 +360,8 @@ export default function SourceFilesPage() {
                     </Box>
                 )}
 
-                {filtered.map((file, idx) => (
-                    <FileRow key={file.id} file={file} index={idx} onDelete={handleDelete} />
+                {paginatedFiles.map((file, idx) => (
+                    <FileRow key={file.id} file={file} index={page * ROWS_PER_PAGE + idx} onDelete={handleDelete} />
                 ))}
 
                 {/* Footer */}
@@ -367,6 +373,7 @@ export default function SourceFilesPage() {
                             borderTop: `1px solid ${palette.border}`,
                             backgroundColor: alpha(palette.bgSecondary, 0.4),
                             display: 'flex',
+                            alignItems: 'center',
                             justifyContent: 'space-between',
                         }}
                     >
@@ -380,16 +387,30 @@ export default function SourceFilesPage() {
                         >
                             {filtered.length} of {files.length} records
                         </Typography>
-                        <Typography
-                            variant="caption"
+                        <TablePagination
+                            component="div"
+                            count={filtered.length}
+                            page={page}
+                            onPageChange={(e, newPage) => setPage(newPage)}
+                            rowsPerPage={ROWS_PER_PAGE}
+                            rowsPerPageOptions={[ROWS_PER_PAGE]}
                             sx={{
-                                fontFamily: '"JetBrains Mono", monospace',
-                                color: 'text.secondary',
-                                fontSize: '0.65rem',
+                                '.MuiTablePagination-toolbar': {
+                                    minHeight: 32,
+                                    px: 0,
+                                },
+                                '.MuiTablePagination-displayedRows': {
+                                    fontFamily: '"JetBrains Mono", monospace',
+                                    fontSize: '0.65rem',
+                                    color: 'text.secondary',
+                                    m: 0,
+                                },
+                                '.MuiTablePagination-actions button': {
+                                    color: palette.accentPrimary,
+                                    p: 0.25,
+                                },
                             }}
-                        >
-                            SOURCE FILES
-                        </Typography>
+                        />
                     </Box>
                 )}
             </Paper>
