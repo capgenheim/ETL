@@ -38,9 +38,6 @@ docker-data/
 # Database
 *.sql.bak
 
-# Test files for mapping
-testfilesmapping/
-
 # Transformation file processing dirs
 trfm_inbound/
 trfm_outbound/

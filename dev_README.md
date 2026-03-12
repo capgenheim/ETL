@@ -70,6 +70,237 @@ Wait ~30 seconds for all services to initialise. The backend auto-runs:
 
 ---
 
+## Application Flow Diagram
+
+```mermaid
+flowchart TB
+    subgraph USER["👤 User Browser"]
+        LOGIN["Login Page"]
+        DASH["Dashboard"]
+        PKG["Package Manager"]
+        MAP["Package Mapping"]
+        CANVAS["Canvas List"]
+        FMGR["File Manager"]
+        UNPROC["Unprocessed Files"]
+    end
+
+    subgraph NGINX["🔀 Nginx :80"]
+        ROUTE{"Route"}
+    end
+
+    subgraph FRONTEND["⚛️ React :3000"]
+        PAGES["Pages"]
+        API_CLIENT["Axios + Error Handler"]
+    end
+
+    subgraph BACKEND["🐍 Django :8000"]
+        AUTH["OAuth2 Auth"]
+        UPLOAD["File Upload"]
+        PKG_API["Package API"]
+        MAP_API["Mapping API + Mandatory Validation"]
+        DASH_API["Dashboard API"]
+        FM_API["File Manager API"]
+        UNPROC_API["Unprocessed API"]
+    end
+
+    subgraph CELERY["⚙️ Celery"]
+        BEAT["Beat 30s"] --> WORKER["Worker"]
+        WORKER --> SENSE["File Sense Scan"]
+        SENSE --> PROCESS["File Processor"]
+    end
+
+    subgraph STORAGE["💾 Storage"]
+        PG[("PostgreSQL 16")]
+        REDIS[("Redis 7")]
+        INBOUND["📂 trfm_inbound/"]
+        OUTBOUND["📂 trfm_outbound/"]
+    end
+
+    USER --> NGINX
+    ROUTE -->|"/api/*"| BACKEND
+    ROUTE -->|"/*"| FRONTEND
+    FRONTEND --> API_CLIENT --> NGINX
+
+    BACKEND --> PG
+    BEAT --> REDIS
+    SENSE --> INBOUND
+    PROCESS --> OUTBOUND
+    PROCESS --> PG
+```
+
+---
+
+## PostgreSQL Database Diagram
+
+```mermaid
+erDiagram
+    User {
+        bigint id PK
+        varchar email UK
+        varchar username UK
+        varchar password
+        varchar role "superadmin|admin|manager|analyst|operator|viewer|auditor"
+        varchar first_name
+        varchar last_name
+        boolean is_active
+        boolean is_staff
+        boolean is_superuser
+        inet last_login_ip
+        int failed_login_attempts
+        datetime locked_until
+        datetime last_login
+        datetime created_at
+        datetime updated_at
+    }
+
+    AuditLog {
+        bigint id PK
+        bigint user_id FK
+        varchar user_email
+        varchar action "login|logout|file_upload|package_create|etc"
+        varchar severity "info|warning|critical"
+        inet ip_address
+        text user_agent
+        float latitude
+        float longitude
+        varchar city
+        varchar country
+        json details
+        varchar resource
+        datetime timestamp
+    }
+
+    Notification {
+        bigint id PK
+        bigint user_id FK
+        varchar title
+        text message
+        varchar notification_type "info|warning|error|success"
+        boolean is_read
+        varchar link
+        datetime created_at
+    }
+
+    UploadedFile {
+        bigint id PK
+        varchar file_type "source|canvas"
+        varchar original_filename
+        varchar file_format "csv|xls|xlsx"
+        json headers_json "List of column headers"
+        json mandatory_fields "List of mandatory header names"
+        int field_count
+        bigint uploaded_by_id FK
+        datetime created_at
+        datetime updated_at
+    }
+
+    Package {
+        bigint id PK
+        varchar name
+        varchar file_pattern "Glob pattern e.g. MBB_*.csv"
+        bigint source_file_id FK
+        bigint canvas_file_id FK
+        varchar input_format "csv|xls|xlsx"
+        varchar output_format "csv|xlsx"
+        varchar output_prefix
+        varchar batch_mode "instant|interval"
+        int batch_interval_minutes
+        varchar status "draft|active|paused|stopped"
+        varchar mapping_status "unmapped|mapped|partial"
+        bigint created_by_id FK
+        datetime created_at
+        datetime updated_at
+    }
+
+    FieldMapping {
+        bigint id PK
+        bigint package_id FK
+        varchar source_header
+        varchar canvas_header
+        int order
+        varchar mapping_type "direct|condition|constant"
+        boolean has_condition
+        json condition_json "IF/ELSE or IF Only or Constant rule"
+        varchar constant_value
+    }
+
+    InboundFileLog {
+        bigint id PK
+        bigint package_id FK
+        varchar original_filename
+        binary file_content "Stored copy of inbound file"
+        int file_size
+        varchar file_format
+        varchar output_filename
+        int rows_processed
+        varchar status "success|failed"
+        text error_message
+        varchar run_type "instant|scheduled|adhoc"
+        datetime processed_at
+    }
+
+    FileTag {
+        bigint id PK
+        varchar name UK
+        varchar color
+        boolean auto_created
+        datetime created_at
+    }
+
+    User ||--o{ AuditLog : "audited by"
+    User ||--o{ Notification : "receives"
+    User ||--o{ UploadedFile : "uploads"
+    User ||--o{ Package : "creates"
+    Package ||--o{ FieldMapping : "has mappings"
+    Package ||--o{ InboundFileLog : "has run logs"
+    Package }o--|| UploadedFile : "source_file"
+    Package }o--|| UploadedFile : "canvas_file"
+    InboundFileLog }o--o{ FileTag : "tagged with"
+```
+
+---
+
+## Modules & Features
+
+### 🏠 Dashboard
+- Stat cards: Active Packages, Runs (7d), Rows Processed, Server Time, **Unprocessed Files**
+- Recent Activity feed (last 20 events) · Processing Summary panel
+
+### 📦 Package Manager
+- CRUD for transformation packages · File pattern matching (glob: `MBB*.csv`)
+- Status lifecycle: Draft → Active → Paused → Stopped
+- Run logs viewer and ad-hoc run trigger (🚀)
+
+### 🗺️ Package Mapping
+- Visual field mapping grid · **Mandatory field validation** (★ must be mapped)
+- Condition Builder — 3 modes: **IF/ELSE**, **IF Only**, **Constant**
+
+### 📋 Canvas / Source Lists
+- Upload CSV/XLS/XLSX · Auto-detect `*` prefixed headers as mandatory
+- **Manage Fields** dialog to toggle mandatory status
+
+### 📂 File Manager & 📥 Unprocessed Files
+- Browse/download processed output files · View/delete inbound queue
+- Dashboard widget shows live unprocessed count + size
+
+### 🔐 Permissions
+
+| Permission | Operators | Viewers | Admins |
+|-----------|:---------:|:-------:|:------:|
+| `can_run_adhoc` | ✅ | — | ✅ |
+| `can_view_run_logs` | ✅ | ✅ | ✅ |
+| `can_view_unprocessed` | ✅ | ✅ | ✅ |
+| `can_delete_unprocessed` | — | — | ✅ |
+| `can_download_unprocessed` | ✅ | — | ✅ |
+| `can_view_file_manager` | ✅ | ✅ | ✅ |
+| `can_download_file_manager` | ✅ | — | ✅ |
+
+### 📡 Admin Site
+- Bloomberg dark theme · Expanded permission selector (resizable)
+- **API Documentation** panel at `/admin/api-docs/` with JSON/Markdown download
+
+---
+
 ## Changing URLs & Ports
 
 All ports are configurable via `.env`. Edit and restart:
