@@ -1,4 +1,5 @@
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
+import { useSnackbar } from 'notistack';
 import {
     Box,
     Typography,
@@ -10,9 +11,6 @@ import {
     Collapse,
     Divider,
     Tooltip,
-    Snackbar,
-    Alert,
-    Fade,
 } from '@mui/material';
 import {
     CloudUpload as UploadIcon,
@@ -318,10 +316,10 @@ export default function UploadSectionPage() {
     const [canvasFiles, setCanvasFiles] = useState([]);
     const [uploadingSource, setUploadingSource] = useState(false);
     const [uploadingCanvas, setUploadingCanvas] = useState(false);
-    const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+    const { enqueueSnackbar } = useSnackbar();
 
     const showMessage = (message, severity = 'success') => {
-        setSnackbar({ open: true, message, severity });
+        enqueueSnackbar(message, { variant: severity });
     };
 
     /* Upload files to backend */
@@ -459,26 +457,7 @@ export default function UploadSectionPage() {
                 />
             </Box>
 
-            {/* Snackbar */}
-            <Snackbar
-                open={snackbar.open}
-                autoHideDuration={4000}
-                onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-                TransitionComponent={Fade}
-            >
-                <Alert
-                    onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
-                    severity={snackbar.severity}
-                    variant="filled"
-                    sx={{
-                        borderRadius: 1.5,
-                        fontWeight: 500,
-                    }}
-                >
-                    {snackbar.message}
-                </Alert>
-            </Snackbar>
+
         </Box>
     );
 }
