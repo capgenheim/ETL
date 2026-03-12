@@ -112,12 +112,34 @@ server_name etl.mycompany.com;           # Production domain
 server_name 10.0.0.50 etl.internal.my;   # Multiple names
 ```
 
-Also update `ALLOWED_HOSTS` and `CORS_ALLOWED_ORIGINS` in `.env`:
+Also update these two settings in `.env`:
+
+**`ALLOWED_HOSTS`** — A list of domain names or IPs that the backend will accept requests from.  
+Think of it as a **guest list**: if someone tries to access your app from an address not in this list, Django will reject it.
+
+**`CORS_ALLOWED_ORIGINS`** — Same idea, but specifically for the **browser's frontend**.  
+The browser checks this before allowing the React app to talk to the Django API. Must include `http://` or `https://`.
 
 ```bash
-ALLOWED_HOSTS=etl.mycompany.com,192.168.1.100,localhost
-CORS_ALLOWED_ORIGINS=http://etl.mycompany.com,http://192.168.1.100
+# Example 1: Working on your laptop only
+ALLOWED_HOSTS=localhost,127.0.0.1
+CORS_ALLOWED_ORIGINS=http://localhost
+
+# Example 2: Colleagues access via office network IP
+ALLOWED_HOSTS=localhost,192.168.1.100
+CORS_ALLOWED_ORIGINS=http://localhost,http://192.168.1.100
+
+# Example 3: Deployed to a company domain
+ALLOWED_HOSTS=etl.mycompany.com,localhost
+CORS_ALLOWED_ORIGINS=http://etl.mycompany.com,http://localhost
+
+# Example 4: Custom port (e.g. Nginx on 8080)
+ALLOWED_HOSTS=localhost,192.168.1.100
+CORS_ALLOWED_ORIGINS=http://localhost:8080,http://192.168.1.100:8080
 ```
+
+> **Tip**: The `ALLOWED_HOSTS` values are just names/IPs (no `http://`).  
+> The `CORS_ALLOWED_ORIGINS` values must start with `http://` or `https://`.
 
 ### After Any Port/URL Changes
 
