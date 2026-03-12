@@ -86,20 +86,96 @@ MAIL_PORT=1025             # Mailpit SMTP
 
 ### Changing the Main Access Port (Nginx)
 
-The port format is `"YOUR_PC:INSIDE_DOCKER"`.  
-The **left number** is what you type in your browser. The **right number** stays the same (it's the port inside the container).
+The port format is `"YOUR_PC:INSIDE_DOCKER"`.
+
+```
+"8080:80"
+  │     │
+  │     └── 80 = Nginx inside Docker always listens on port 80 (don't change this)
+  │
+  └──── 8080 = The port on YOUR computer/server (this is what you type in the browser)
+```
+
+The **right number (`:80`)** is fixed — it's the port Nginx uses **inside** the Docker container. You never need to change it.  
+The **left number** is what you open in your browser.
 
 Edit `docker-compose.yml` under the `nginx` service:
 
 ```yaml
 ports:
-  - "80:80"          # Default → open browser at http://localhost
-  - "8080:80"        # Example → open browser at http://localhost:8080
-  - "3001:80"        # Example → open browser at http://localhost:3001
+  - "80:80"          # Default → http://localhost
+  - "8080:80"        # Example → http://localhost:8080
+  - "3001:80"        # Example → http://localhost:3001
 ```
 
 > **Simple Rule**: Only change the number on the **left** side of the colon.  
 > For example, if port 80 is already used by another app on your PC, change it to `"8080:80"` and access the app at `http://localhost:8080`.
+
+### Setting Up SSL / HTTPS (with .cer / .key certificate)
+
+If you have an SSL certificate (e.g. from your IT team), follow these steps:
+
+**Step 1**: Place your certificate files in a `certs/` folder:
+
+```
+ETL/
+├── certs/
+│   ├── etl.mycompany.com.cer    ← your SSL certificate
+│   └── etl.mycompany.com.key    ← your private key
+```
+
+**Step 2**: Update `nginx/default.conf` — replace the `server` block:
+
+```nginx
+server {
+    listen 80;
+    server_name etl.mycompany.com;
+    # Redirect all HTTP to HTTPS
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name etl.mycompany.com;
+
+    ssl_certificate     /etc/nginx/certs/etl.mycompany.com.cer;
+    ssl_certificate_key /etc/nginx/certs/etl.mycompany.com.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    # ... (keep all the existing location blocks: /api/, /admin/, / etc.)
+}
+```
+
+**Step 3**: Update `docker-compose.yml` to mount certs and expose port 443:
+
+```yaml
+nginx:
+  image: nginx:alpine
+  container_name: etl-nginx
+  ports:
+    - "80:80"        # HTTP (redirects to HTTPS)
+    - "443:443"      # HTTPS
+  volumes:
+    - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    - ./certs:/etc/nginx/certs:ro     # ← add this line
+```
+
+**Step 4**: Update `.env`:
+
+```bash
+ALLOWED_HOSTS=etl.mycompany.com,localhost
+CORS_ALLOWED_ORIGINS=https://etl.mycompany.com      # Note: https://
+```
+
+**Step 5**: Rebuild and restart:
+
+```bash
+docker compose down
+docker compose up -d --build
+```
+
+> **Note**: Add `certs/` to `.gitignore` — never commit SSL private keys to git.
+
 
 ### Changing the Server Name / Domain
 

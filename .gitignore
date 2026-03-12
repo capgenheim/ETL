@@ -44,3 +44,6 @@ testfilesmapping/
 # Transformation file processing dirs
 trfm_inbound/
 trfm_outbound/
+
+# SSL certificates (never commit private keys)
+certs/
