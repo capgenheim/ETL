@@ -62,6 +62,14 @@ class TestExtractHeadersCsv(TestCase):
         self.assertEqual(result['headers'], [])
         self.assertEqual(result['field_count'], 0)
 
+    def test_csv_blanks_filtered(self):
+        """Blank headers in the middle or end should be excluded."""
+        content = 'Name,,Age,,Email,'
+        f = io.BytesIO(content.encode('utf-8'))
+        result = extract_headers(f, 'gaps.csv')
+        self.assertEqual(result['headers'], ['Name', 'Age', 'Email'])
+        self.assertEqual(result['field_count'], 3)
+
 
 class TestExtractHeadersXlsx(TestCase):
     def _make_xlsx(self, headers):

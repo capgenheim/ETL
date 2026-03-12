@@ -56,9 +56,6 @@ def extract_headers_xlsx(file_obj):
             headers = [str(cell) if cell is not None else '' for cell in row]
             break
         wb.close()
-        # Filter out empty trailing headers
-        while headers and headers[-1] == '':
-            headers.pop()
         return headers
     except Exception as e:
         raise HeaderExtractionError(f'Failed to read xlsx file: {str(e)}')
@@ -73,9 +70,6 @@ def extract_headers_xls(file_obj):
         if ws.nrows == 0:
             return []
         headers = [str(ws.cell_value(0, col)) for col in range(ws.ncols)]
-        # Filter out empty trailing headers
-        while headers and headers[-1] == '':
-            headers.pop()
         return headers
     except Exception as e:
         raise HeaderExtractionError(f'Failed to read xls file: {str(e)}')
@@ -99,9 +93,6 @@ def extract_headers_csv(file_obj):
         headers = next(reader, [])
         # Strip whitespace from headers
         headers = [h.strip() for h in headers]
-        # Filter out empty trailing headers
-        while headers and headers[-1] == '':
-            headers.pop()
         return headers
     except Exception as e:
         raise HeaderExtractionError(f'Failed to read csv file: {str(e)}')
@@ -121,7 +112,10 @@ def extract_headers(file_obj, filename):
         'csv': extract_headers_csv,
     }
 
-    headers = extractors[ext](file_obj)
+    raw_headers = extractors[ext](file_obj)
+
+    # Keep only non-blank headers (skip empty/whitespace-only cells)
+    headers = [h for h in raw_headers if h.strip()]
 
     return {
         'headers': headers,
