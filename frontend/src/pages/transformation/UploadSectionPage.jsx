@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import {
     Box,
     Typography,
@@ -369,22 +369,16 @@ export default function UploadSectionPage() {
         }
     };
 
-    /* Load existing files on mount */
-    const loadFiles = useCallback(async () => {
-        try {
-            const [srcRes, canvasRes] = await Promise.all([
-                api.get('/transformation/files/?type=source'),
-                api.get('/transformation/files/?type=canvas'),
-            ]);
-            setSourceFiles(srcRes.data);
-            setCanvasFiles(canvasRes.data);
-        } catch {
-            // Silently fail — user will see empty state
+    /* Save — clear staging area */
+    const handleSave = () => {
+        if (sourceFiles.length === 0 && canvasFiles.length === 0) {
+            showMessage('No files to save', 'warning');
+            return;
         }
-    }, []);
-
-    // Load on mount
-    useEffect(() => { loadFiles(); }, [loadFiles]);
+        setSourceFiles([]);
+        setCanvasFiles([]);
+        showMessage('Files saved successfully');
+    };
 
     return (
         <Box>
@@ -408,10 +402,8 @@ export default function UploadSectionPage() {
                 <Button
                     variant="contained"
                     startIcon={<SaveIcon />}
-                    onClick={async () => {
-                        await loadFiles();
-                        showMessage('All changes saved successfully');
-                    }}
+                    onClick={handleSave}
+                    disabled={sourceFiles.length === 0 && canvasFiles.length === 0}
                     sx={{
                         px: 3,
                         py: 1,
