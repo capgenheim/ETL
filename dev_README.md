@@ -360,12 +360,52 @@ ETL/
 
 ## Troubleshooting
 
-| Issue | Solution |
-|-------|----------|
-| **502 Bad Gateway** | `docker compose down && docker compose up -d --build` |
+| Issue | Quick Solution |
+|-------|---------------|
+| **502 Bad Gateway** | See detailed fix below ⬇️ |
+| **Login shows "unexpected error"** | See detailed fix below ⬇️ |
 | **Database connection refused** | Wait for healthcheck: `docker compose ps` (check db is healthy) |
-| **Frontend not loading** | Check `etl-frontend` logs: `docker compose logs frontend` |
-| **Celery tasks not running** | Verify worker: `docker exec etl-celery-worker celery -A config inspect active` |
+| **Frontend not loading** | Check logs: `docker compose logs frontend` |
+| **Celery tasks not running** | `docker restart etl-celery-beat etl-celery-worker` |
 | **File sense not picking up files** | Auto-scheduled on boot. Restart: `docker restart etl-celery-beat etl-celery-worker` |
 | **Port conflict** | Change ports in `.env` and restart |
 | **Permission denied on trfm dirs** | `chmod 777 ./trfm_inbound ./trfm_outbound` |
+
+### 🔧 Fix: 502 Bad Gateway + Login "Unexpected Error"
+
+This can happen after a Docker rebuild. The backend container restarts and the OAuth2 secret may become corrupted (hashed instead of plain text).
+
+**Step 1** — Rebuild everything cleanly:
+```bash
+docker compose down
+docker compose up -d --build
+```
+
+**Step 2** — Wait ~15 seconds, then fix the OAuth2 secret:
+```bash
+docker exec etl-backend python manage.py shell -c "
+from oauth2_provider.models import Application
+import os
+secret = os.environ.get('OAUTH2_CLIENT_SECRET', 'etl-frontend-secret')
+Application.objects.filter(client_id='etl-frontend-client').update(client_secret=secret)
+print('OAuth2 secret fixed!')
+"
+```
+
+**Step 3** — Verify everything works:
+```bash
+# Check backend is responding (should show 302)
+docker exec etl-nginx curl -s -o /dev/null -w '%{http_code}\n' http://backend:8000/admin/
+
+# Test login API (should return access_token)
+docker exec etl-nginx curl -s -X POST http://backend:8000/api/auth/login/ \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin@etlplatform.local","password":"Admin@12345"}' | head -1
+```
+
+**Step 4** — Refresh your browser and login.
+
+> **Why does this happen?**  
+> Django OAuth Toolkit automatically hashes the `client_secret` when saving via `.save()`.  
+> During Docker rebuild, the startup script may trigger this hashing unintentionally.  
+> The fix above forces the secret back to plain text using `.update()` which bypasses the hashing.
