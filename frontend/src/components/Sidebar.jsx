@@ -19,6 +19,7 @@ import {
     Dashboard as DashboardIcon,
     Transform as TransformIcon,
     UploadFile as UploadFileIcon,
+    CloudUpload as CloudUploadIcon,
     Description as SourceIcon,
     GridView as CanvasIcon,
     AddBox as AddBoxIcon,
@@ -47,6 +48,7 @@ const navItems = [
                 text: 'File Upload',
                 icon: UploadFileIcon,
                 children: [
+                    { text: 'Upload Section', icon: CloudUploadIcon, path: '/transformation/upload-section' },
                     { text: 'List of Source Files', icon: SourceIcon, path: '/transformation/source-files' },
                     { text: 'List of Canvas', icon: CanvasIcon, path: '/transformation/canvas-list' },
                 ],

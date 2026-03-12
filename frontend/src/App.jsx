@@ -8,6 +8,7 @@ import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import DashboardLayout from './layouts/DashboardLayout';
 import SourceFilesPage from './pages/transformation/SourceFilesPage';
+import UploadSectionPage from './pages/transformation/UploadSectionPage';
 import CanvasListPage from './pages/transformation/CanvasListPage';
 import CreatePackagePage from './pages/transformation/CreatePackagePage';
 import PackageListPage from './pages/transformation/PackageListPage';
@@ -33,6 +34,7 @@ function App() {
                                 <Route path="/dashboard" element={<DashboardPage />} />
 
                                 {/* Transformation Panel */}
+                                <Route path="/transformation/upload-section" element={<UploadSectionPage />} />
                                 <Route path="/transformation/source-files" element={<SourceFilesPage />} />
                                 <Route path="/transformation/canvas-list" element={<CanvasListPage />} />
                                 <Route path="/transformation/create-package" element={<CreatePackagePage />} />
