@@ -208,6 +208,41 @@ class TestFileUploadAPI(TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn('errors', resp.data)
 
+    def test_upload_duplicate_rejected(self):
+        """Re-uploading a file with the same name and type should return a duplicate error."""
+        f1 = self._make_csv_file('report.csv', ['A', 'B'])
+        resp1 = self.client.post('/api/transformation/upload/', {
+            'files': [f1],
+            'file_type': 'source',
+        }, format='multipart')
+        self.assertEqual(resp1.status_code, 201)
+
+        # Upload same filename again for the same type
+        f2 = self._make_csv_file('report.csv', ['X', 'Y'])
+        resp2 = self.client.post('/api/transformation/upload/', {
+            'files': [f2],
+            'file_type': 'source',
+        }, format='multipart')
+        self.assertEqual(resp2.status_code, 400)  # No successful uploads
+        self.assertEqual(len(resp2.data.get('errors', [])), 1)
+        self.assertIn('Duplicate', resp2.data['errors'][0]['error'])
+
+    def test_same_filename_different_type_allowed(self):
+        """Same filename is allowed across different types (source vs canvas)."""
+        f1 = self._make_csv_file('data.csv', ['A', 'B'])
+        resp1 = self.client.post('/api/transformation/upload/', {
+            'files': [f1],
+            'file_type': 'source',
+        }, format='multipart')
+        self.assertEqual(resp1.status_code, 201)
+
+        f2 = self._make_csv_file('data.csv', ['X', 'Y'])
+        resp2 = self.client.post('/api/transformation/upload/', {
+            'files': [f2],
+            'file_type': 'canvas',
+        }, format='multipart')
+        self.assertEqual(resp2.status_code, 201)  # Different type, should succeed
+
 
 @override_settings(MEDIA_ROOT=TEMP_MEDIA)
 class TestFileListAndDeleteAPI(TestCase):

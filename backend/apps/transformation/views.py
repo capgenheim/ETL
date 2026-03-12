@@ -41,6 +41,18 @@ class FileUploadView(APIView):
 
         for f in files:
             try:
+                # Check for duplicate filename within same type
+                if UploadedFile.objects.filter(
+                    file_type=file_type,
+                    original_filename=f.name,
+                    uploaded_by=request.user,
+                ).exists():
+                    errors.append({
+                        'filename': f.name,
+                        'error': f'Duplicate: "{f.name}" already exists in {file_type} files',
+                    })
+                    continue
+
                 # Extract headers
                 header_data = extract_headers(f, f.name)
                 f.seek(0)  # Reset file pointer after reading
