@@ -163,6 +163,103 @@ UNFOLD = {
     "SITE_TITLE": "ETL Platform Admin",
     "SITE_HEADER": "ETL Platform",
     "SITE_SYMBOL": "database",
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": False,
+    "THEME": "dark",
+    "STYLES": [
+        lambda request: "admin/css/bloomberg.css",
+    ],
+    "COLORS": {
+        "primary": {
+            "50": "255 243 224",
+            "100": "255 224 178",
+            "200": "255 204 128",
+            "300": "255 183 77",
+            "400": "255 167 38",
+            "500": "255 152 0",
+            "600": "251 140 0",
+            "700": "245 124 0",
+            "800": "230 81 0",
+            "900": "191 54 12",
+            "950": "120 30 5",
+        },
+    },
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": False,
+        "navigation": [
+            {
+                "title": "Dashboard",
+                "icon": "dashboard",
+                "items": [
+                    {
+                        "title": "Home",
+                        "icon": "home",
+                        "link": "/admin/",
+                    },
+                ],
+            },
+            {
+                "title": "Transformation",
+                "icon": "transform",
+                "items": [
+                    {
+                        "title": "Packages",
+                        "icon": "inventory_2",
+                        "link": "/admin/transformation/package/",
+                    },
+                    {
+                        "title": "Uploaded Files",
+                        "icon": "upload_file",
+                        "link": "/admin/transformation/uploadedfile/",
+                    },
+                    {
+                        "title": "Inbound File Logs",
+                        "icon": "receipt_long",
+                        "link": "/admin/transformation/inboundfilelog/",
+                    },
+                ],
+            },
+            {
+                "title": "File Manager",
+                "icon": "folder_open",
+                "items": [
+                    {
+                        "title": "File Tags",
+                        "icon": "tag",
+                        "link": "/admin/transformation/filetag/",
+                    },
+                ],
+            },
+            {
+                "title": "Users & Permissions",
+                "icon": "admin_panel_settings",
+                "items": [
+                    {
+                        "title": "Users",
+                        "icon": "person",
+                        "link": "/admin/accounts/user/",
+                    },
+                    {
+                        "title": "Groups",
+                        "icon": "group",
+                        "link": "/admin/auth/group/",
+                    },
+                ],
+            },
+            {
+                "title": "Documentation",
+                "icon": "menu_book",
+                "items": [
+                    {
+                        "title": "API Documentation",
+                        "icon": "api",
+                        "link": "/admin/api-docs/",
+                    },
+                ],
+            },
+        ],
+    },
 }
 
 # ===== Security Headers =====

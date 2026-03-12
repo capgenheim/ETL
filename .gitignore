@@ -47,3 +47,6 @@ trfm_outbound/
 
 # SSL certificates (never commit private keys)
 certs/
+
+# Django collected static (auto-generated)
+backend/staticfiles/

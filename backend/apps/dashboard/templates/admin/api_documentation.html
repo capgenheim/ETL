@@ -1,0 +1,316 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block title %}API Documentation — {{ site_title }}{% endblock %}
+
+{% block content %}
+<style>
+    .api-docs-container {
+        font-family: 'Inter', -apple-system, sans-serif;
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+    .api-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 24px;
+        padding: 20px 24px;
+        background: #0a0e17;
+        border: 1px solid #21262d;
+        border-radius: 10px;
+    }
+    .api-header h1 {
+        color: #ff9800 !important;
+        font-size: 1.4rem !important;
+        font-weight: 700 !important;
+        margin: 0 !important;
+        text-transform: none !important;
+    }
+    .api-header .badge {
+        background: rgba(255,152,0,0.12);
+        color: #ff9800;
+        padding: 4px 14px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        border: 1px solid rgba(255,152,0,0.3);
+    }
+    .download-bar {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 24px;
+    }
+    .download-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 20px;
+        border-radius: 8px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        text-decoration: none !important;
+        cursor: pointer;
+        transition: all 0.2s;
+        border: 1px solid #21262d;
+    }
+    .download-btn.json {
+        background: rgba(76,175,80,0.1);
+        color: #4caf50 !important;
+        border-color: rgba(76,175,80,0.3);
+    }
+    .download-btn.json:hover {
+        background: rgba(76,175,80,0.2);
+    }
+    .download-btn.md {
+        background: rgba(33,150,243,0.1);
+        color: #2196f3 !important;
+        border-color: rgba(33,150,243,0.3);
+    }
+    .download-btn.md:hover {
+        background: rgba(33,150,243,0.2);
+    }
+    .api-group {
+        margin-bottom: 28px;
+        border: 1px solid #21262d;
+        border-radius: 10px;
+        overflow: hidden;
+        background: #161b22;
+    }
+    .api-group-header {
+        padding: 14px 20px;
+        background: #0a0e17;
+        border-bottom: 2px solid #ff9800;
+        color: #ff9800 !important;
+        font-weight: 700 !important;
+        font-size: 0.95rem !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.06em;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .api-group-header .count {
+        font-size: 0.7rem;
+        color: #8b949e;
+        font-weight: 500;
+        text-transform: none;
+    }
+    .api-endpoint {
+        padding: 16px 20px;
+        border-bottom: 1px solid #21262d;
+        transition: background 0.15s;
+    }
+    .api-endpoint:last-child { border-bottom: none; }
+    .api-endpoint:hover { background: rgba(255,152,0,0.04); }
+    .endpoint-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+    }
+    .method-badge {
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 4px;
+        font-size: 0.68rem;
+        font-weight: 700;
+        font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
+        min-width: 52px;
+        text-align: center;
+    }
+    .method-GET { background: rgba(33,150,243,0.15); color: #2196f3; border: 1px solid rgba(33,150,243,0.3); }
+    .method-POST { background: rgba(76,175,80,0.15); color: #4caf50; border: 1px solid rgba(76,175,80,0.3); }
+    .method-PUT { background: rgba(255,152,0,0.15); color: #ff9800; border: 1px solid rgba(255,152,0,0.3); }
+    .method-PATCH { background: rgba(156,39,176,0.15); color: #ce93d8; border: 1px solid rgba(156,39,176,0.3); }
+    .method-DELETE { background: rgba(244,67,54,0.15); color: #f44336; border: 1px solid rgba(244,67,54,0.3); }
+    .endpoint-path {
+        font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
+        font-size: 0.82rem;
+        color: #e8eaed;
+        font-weight: 500;
+    }
+    .auth-badge {
+        font-size: 0.62rem;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-weight: 600;
+        margin-left: auto;
+    }
+    .auth-required { background: rgba(255,152,0,0.1); color: #ff9800; border: 1px solid rgba(255,152,0,0.2); }
+    .auth-open { background: rgba(76,175,80,0.1); color: #4caf50; border: 1px solid rgba(76,175,80,0.2); }
+    .endpoint-desc {
+        color: #8b949e;
+        font-size: 0.78rem;
+        margin-bottom: 10px;
+        line-height: 1.5;
+    }
+    .endpoint-details { margin-top: 8px; }
+    .detail-section {
+        margin-bottom: 10px;
+    }
+    .detail-label {
+        font-size: 0.68rem;
+        font-weight: 600;
+        color: #8b949e;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 4px;
+    }
+    .detail-code {
+        background: #0a0e17;
+        border: 1px solid #21262d;
+        border-radius: 6px;
+        padding: 10px 14px;
+        font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
+        font-size: 0.72rem;
+        color: #e8eaed;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+        max-height: 300px;
+        overflow-y: auto;
+    }
+    .perm-badge {
+        display: inline-block;
+        font-size: 0.62rem;
+        padding: 2px 8px;
+        border-radius: 10px;
+        background: rgba(156,39,176,0.1);
+        color: #ce93d8;
+        border: 1px solid rgba(156,39,176,0.2);
+        font-weight: 600;
+        margin-left: 6px;
+    }
+    .error-item {
+        font-size: 0.72rem;
+        color: #f44336;
+        font-family: 'JetBrains Mono', monospace;
+        padding: 2px 0;
+    }
+    .error-item .code { font-weight: 700; }
+    .error-item .msg { color: #8b949e; }
+    .toggle-btn {
+        font-size: 0.68rem;
+        color: #ff9800 !important;
+        cursor: pointer;
+        background: none;
+        border: 1px solid rgba(255,152,0,0.2);
+        border-radius: 4px;
+        padding: 2px 10px;
+        font-weight: 600;
+        text-decoration: none !important;
+    }
+    .toggle-btn:hover { background: rgba(255,152,0,0.1); }
+</style>
+
+<div class="api-docs-container">
+    <!-- Header -->
+    <div class="api-header">
+        <h1>📡 API Documentation</h1>
+        <span class="badge">{{ total_endpoints }} Endpoints</span>
+    </div>
+
+    <!-- Download buttons -->
+    <div class="download-bar">
+        <a href="?download=json" class="download-btn json">
+            ⬇ Download JSON
+        </a>
+        <a href="?download=markdown" class="download-btn md">
+            ⬇ Download Markdown
+        </a>
+    </div>
+
+    <!-- API Groups -->
+    {% for group in api_groups %}
+    <div class="api-group">
+        <div class="api-group-header">
+            {{ group.group }}
+            <span class="count">{{ group.endpoints|length }} endpoint{{ group.endpoints|length|pluralize }}</span>
+        </div>
+        {% for ep in group.endpoints %}
+        <div class="api-endpoint">
+            <div class="endpoint-header">
+                <span class="method-badge method-{{ ep.method }}">{{ ep.method }}</span>
+                <span class="endpoint-path">{{ ep.path }}</span>
+                {% if ep.permissions %}
+                <span class="perm-badge">🔑 {{ ep.permissions }}</span>
+                {% endif %}
+                {% if ep.auth_required %}
+                <span class="auth-badge auth-required">🔒 Auth</span>
+                {% else %}
+                <span class="auth-badge auth-open">🔓 Open</span>
+                {% endif %}
+            </div>
+            <div class="endpoint-desc">{{ ep.description }}</div>
+            <div class="endpoint-details">
+                <button class="toggle-btn" onclick="var d=this.nextElementSibling;d.style.display=d.style.display==='none'?'block':'none';this.textContent=d.style.display==='none'?'▶ Show Details':'▼ Hide Details'">▶ Show Details</button>
+                <div style="display:none;margin-top:8px;">
+                    {% if ep.request_body %}
+                    <div class="detail-section">
+                        <div class="detail-label">Request Body</div>
+                        <div class="detail-code" id="req-{{ forloop.parentloop.counter }}-{{ forloop.counter }}"></div>
+                    </div>
+                    {% endif %}
+                    {% if ep.query_params %}
+                    <div class="detail-section">
+                        <div class="detail-label">Query Parameters</div>
+                        <div class="detail-code" id="qp-{{ forloop.parentloop.counter }}-{{ forloop.counter }}"></div>
+                    </div>
+                    {% endif %}
+                    {% if ep.response_200 %}
+                    <div class="detail-section">
+                        <div class="detail-label">Response (200)</div>
+                        <div class="detail-code" id="res200-{{ forloop.parentloop.counter }}-{{ forloop.counter }}"></div>
+                    </div>
+                    {% endif %}
+                    {% if ep.response_201 %}
+                    <div class="detail-section">
+                        <div class="detail-label">Response (201)</div>
+                        <div class="detail-code" id="res201-{{ forloop.parentloop.counter }}-{{ forloop.counter }}"></div>
+                    </div>
+                    {% endif %}
+                    {% if ep.response_204 %}
+                    <div class="detail-section">
+                        <div class="detail-label">Response (204)</div>
+                        <div class="detail-code">{{ ep.response_204 }}</div>
+                    </div>
+                    {% endif %}
+                    {% if ep.errors %}
+                    <div class="detail-section">
+                        <div class="detail-label">Error Responses</div>
+                        {% for code, msg in ep.errors.items %}
+                        <div class="error-item">
+                            <span class="code">{{ code }}</span> — <span class="msg">{{ msg }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endfor %}
+</div>
+
+<script>
+// Render JSON blocks from the API data
+const apiData = {{ api_json|safe }};
+apiData.forEach((group, gi) => {
+    group.endpoints.forEach((ep, ei) => {
+        const prefix = `${gi+1}-${ei+1}`;
+        const populate = (id, data) => {
+            const el = document.getElementById(id);
+            if (el && data) {
+                el.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+            }
+        };
+        populate(`req-${prefix}`, ep.request_body);
+        populate(`qp-${prefix}`, ep.query_params);
+        populate(`res200-${prefix}`, ep.response_200);
+        populate(`res201-${prefix}`, ep.response_201);
+    });
+});
+</script>
+{% endblock %}

@@ -5,8 +5,12 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import path, include
+from apps.dashboard.admin_views import ApiDocumentationView
 
 urlpatterns = [
+    # Custom admin views (before admin.site.urls)
+    path('admin/api-docs/', ApiDocumentationView.as_view(), name='admin-api-docs'),
+
     # Admin site (SuperAdmin/Admin access)
     path('admin/', admin.site.urls),
 
