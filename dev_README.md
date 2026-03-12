@@ -86,12 +86,20 @@ MAIL_PORT=1025             # Mailpit SMTP
 
 ### Changing the Main Access Port (Nginx)
 
-Edit `docker-compose.yml` line 10:
+The port format is `"YOUR_PC:INSIDE_DOCKER"`.  
+The **left number** is what you type in your browser. The **right number** stays the same (it's the port inside the container).
+
+Edit `docker-compose.yml` under the `nginx` service:
 
 ```yaml
 ports:
-  - "80:80"        # Change the left number, e.g. "8080:80"
+  - "80:80"          # Default → open browser at http://localhost
+  - "8080:80"        # Example → open browser at http://localhost:8080
+  - "3001:80"        # Example → open browser at http://localhost:3001
 ```
+
+> **Simple Rule**: Only change the number on the **left** side of the colon.  
+> For example, if port 80 is already used by another app on your PC, change it to `"8080:80"` and access the app at `http://localhost:8080`.
 
 ### Changing the Server Name / Domain
 
