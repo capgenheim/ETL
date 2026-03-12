@@ -25,10 +25,13 @@ class Command(BaseCommand):
                 'name': 'ETL Frontend',
                 'client_type': Application.CLIENT_CONFIDENTIAL,
                 'authorization_grant_type': Application.GRANT_PASSWORD,
-                'client_secret': client_secret,
                 'skip_authorization': True,
             }
         )
+        # Store client_secret as plain text (NOT hashed).
+        # Django OAuth Toolkit auto-hashes secrets via .save(),
+        # so we use .update() to bypass the hashing.
+        Application.objects.filter(pk=app.pk).update(client_secret=client_secret)
 
         if created:
             self.stdout.write(self.style.SUCCESS(f'Created OAuth2 application: {app.name}'))
