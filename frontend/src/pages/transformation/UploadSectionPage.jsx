@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useSnackbar } from 'notistack';
 import {
     Box,
     Typography,
@@ -11,6 +10,9 @@ import {
     Collapse,
     Divider,
     Tooltip,
+    Snackbar,
+    Alert,
+    Fade,
 } from '@mui/material';
 import {
     CloudUpload as UploadIcon,
@@ -316,10 +318,10 @@ export default function UploadSectionPage() {
     const [canvasFiles, setCanvasFiles] = useState([]);
     const [uploadingSource, setUploadingSource] = useState(false);
     const [uploadingCanvas, setUploadingCanvas] = useState(false);
-    const { enqueueSnackbar } = useSnackbar();
+    const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
 
     const showMessage = (message, severity = 'success') => {
-        enqueueSnackbar(message, { variant: severity });
+        setSnackbar({ open: true, message, severity });
     };
 
     /* Upload files to backend */
@@ -373,9 +375,11 @@ export default function UploadSectionPage() {
             showMessage('No files to save', 'warning');
             return;
         }
-        setSourceFiles([]);
-        setCanvasFiles([]);
         showMessage('Files saved successfully');
+        setTimeout(() => {
+            setSourceFiles([]);
+            setCanvasFiles([]);
+        }, 100);
     };
 
     return (
@@ -457,7 +461,26 @@ export default function UploadSectionPage() {
                 />
             </Box>
 
-
+            {/* Snackbar */}
+            <Snackbar
+                open={snackbar.open}
+                autoHideDuration={4000}
+                onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+                anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+                TransitionComponent={Fade}
+            >
+                <Alert
+                    onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+                    severity={snackbar.severity}
+                    variant="filled"
+                    sx={{
+                        borderRadius: 1.5,
+                        fontWeight: 500,
+                    }}
+                >
+                    {snackbar.message}
+                </Alert>
+            </Snackbar>
         </Box>
     );
 }
