@@ -7,6 +7,10 @@ import bloombergTheme from './theme/bloombergTheme';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import DashboardLayout from './layouts/DashboardLayout';
+import FileUploadPage from './pages/transformation/FileUploadPage';
+import CreatePackagePage from './pages/transformation/CreatePackagePage';
+import PackageListPage from './pages/transformation/PackageListPage';
+import AuditPage from './pages/AuditPage';
 
 function App() {
     return (
@@ -26,6 +30,10 @@ function App() {
                             {/* Protected Routes */}
                             <Route element={<DashboardLayout />}>
                                 <Route path="/dashboard" element={<DashboardPage />} />
+                                <Route path="/transformation/file-upload" element={<FileUploadPage />} />
+                                <Route path="/transformation/create-package" element={<CreatePackagePage />} />
+                                <Route path="/transformation/package-list" element={<PackageListPage />} />
+                                <Route path="/audit" element={<AuditPage />} />
                             </Route>
 
                             {/* Default redirect */}
