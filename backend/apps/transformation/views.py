@@ -53,14 +53,12 @@ class FileUploadView(APIView):
                     })
                     continue
 
-                # Extract headers
+                # Extract headers (from in-memory file — no disk write)
                 header_data = extract_headers(f, f.name)
-                f.seek(0)  # Reset file pointer after reading
 
-                # Save the file and metadata
+                # Save only metadata — physical file is NOT stored
                 uploaded = UploadedFile.objects.create(
                     file_type=file_type,
-                    file=f,
                     original_filename=f.name,
                     file_format=header_data['file_format'],
                     headers_json=header_data['headers'],

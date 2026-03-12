@@ -23,7 +23,7 @@ class UploadedFile(models.Model):
     ]
 
     file_type = models.CharField(max_length=10, choices=FILE_TYPE_CHOICES, db_index=True)
-    file = models.FileField(upload_to=upload_path)
+    file = models.FileField(upload_to=upload_path, blank=True, null=True)
     original_filename = models.CharField(max_length=255)
     file_format = models.CharField(max_length=10, choices=FORMAT_CHOICES)
     headers_json = models.JSONField(default=list, help_text='Extracted column headers')
