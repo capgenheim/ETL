@@ -55,7 +55,6 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./backend:/app
-      - etl-media-data:/app/media
     depends_on:
       db:
         condition: service_healthy
@@ -106,8 +105,6 @@ services:
 # ============================================
 volumes:
   etl-postgres-data:
-    driver: local
-  etl-media-data:
     driver: local
 
 networks:
