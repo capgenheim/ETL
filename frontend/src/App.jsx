@@ -7,7 +7,8 @@ import bloombergTheme from './theme/bloombergTheme';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import DashboardLayout from './layouts/DashboardLayout';
-import FileUploadPage from './pages/transformation/FileUploadPage';
+import SourceFilesPage from './pages/transformation/SourceFilesPage';
+import CanvasListPage from './pages/transformation/CanvasListPage';
 import CreatePackagePage from './pages/transformation/CreatePackagePage';
 import PackageListPage from './pages/transformation/PackageListPage';
 import AuditPage from './pages/AuditPage';
@@ -30,9 +31,14 @@ function App() {
                             {/* Protected Routes */}
                             <Route element={<DashboardLayout />}>
                                 <Route path="/dashboard" element={<DashboardPage />} />
-                                <Route path="/transformation/file-upload" element={<FileUploadPage />} />
+
+                                {/* Transformation Panel */}
+                                <Route path="/transformation/source-files" element={<SourceFilesPage />} />
+                                <Route path="/transformation/canvas-list" element={<CanvasListPage />} />
                                 <Route path="/transformation/create-package" element={<CreatePackagePage />} />
                                 <Route path="/transformation/package-list" element={<PackageListPage />} />
+
+                                {/* Audit Panel */}
                                 <Route path="/audit" element={<AuditPage />} />
                             </Route>
 

@@ -19,6 +19,8 @@ import {
     Dashboard as DashboardIcon,
     Transform as TransformIcon,
     UploadFile as UploadFileIcon,
+    Description as SourceIcon,
+    GridView as CanvasIcon,
     AddBox as AddBoxIcon,
     ListAlt as ListAltIcon,
     Policy as AuditIcon,
@@ -41,7 +43,14 @@ const navItems = [
         icon: TransformIcon,
         roles: ['user'],
         children: [
-            { text: 'File Upload', icon: UploadFileIcon, path: '/transformation/file-upload' },
+            {
+                text: 'File Upload',
+                icon: UploadFileIcon,
+                children: [
+                    { text: 'List of Source Files', icon: SourceIcon, path: '/transformation/source-files' },
+                    { text: 'List of Canvas', icon: CanvasIcon, path: '/transformation/canvas-list' },
+                ],
+            },
             { text: 'Create Package', icon: AddBoxIcon, path: '/transformation/create-package' },
             { text: 'Package List', icon: ListAltIcon, path: '/transformation/package-list' },
         ],
@@ -64,9 +73,13 @@ export default function Sidebar({ open }) {
         setExpandedMenus((prev) => ({ ...prev, [text]: !prev[text] }));
     };
 
-    // Check if a parent group has an active child
+    // Check if a parent group has an active child (recursive)
     const isGroupActive = (children) =>
-        children?.some((child) => location.pathname === child.path);
+        children?.some((child) =>
+            child.path
+                ? location.pathname === child.path
+                : isGroupActive(child.children)
+        );
 
     // Filter nav items based on user role
     const visibleNavItems = navItems.filter(
@@ -207,6 +220,92 @@ export default function Sidebar({ open }) {
                                         <Collapse in={isExpanded} timeout="auto" unmountOnExit>
                                             <List disablePadding>
                                                 {item.children.map((child) => {
+                                                    // Nested sub-group (e.g. File Upload > Source Files, Canvas)
+                                                    if (child.children) {
+                                                        const subGroupActive = isGroupActive(child.children);
+                                                        const isSubExpanded = expandedMenus[child.text] ?? subGroupActive;
+                                                        return (
+                                                            <Box key={child.text}>
+                                                                <ListItemButton
+                                                                    onClick={() => toggleMenu(child.text)}
+                                                                    sx={{
+                                                                        minHeight: 38,
+                                                                        pl: 5.5,
+                                                                        pr: 2.5,
+                                                                        my: 0.15,
+                                                                        ml: 2.5,
+                                                                    }}
+                                                                >
+                                                                    <ListItemIcon
+                                                                        sx={{
+                                                                            minWidth: 0,
+                                                                            mr: 1.5,
+                                                                            justifyContent: 'center',
+                                                                            color: subGroupActive ? palette.accentPrimary : 'text.secondary',
+                                                                        }}
+                                                                    >
+                                                                        <child.icon sx={{ fontSize: 18 }} />
+                                                                    </ListItemIcon>
+                                                                    <ListItemText
+                                                                        primary={child.text}
+                                                                        primaryTypographyProps={{
+                                                                            fontSize: '0.8125rem',
+                                                                            fontWeight: subGroupActive ? 600 : 400,
+                                                                        }}
+                                                                    />
+                                                                    {isSubExpanded ? (
+                                                                        <ExpandLess sx={{ fontSize: 16, color: 'text.secondary' }} />
+                                                                    ) : (
+                                                                        <ExpandMore sx={{ fontSize: 16, color: 'text.secondary' }} />
+                                                                    )}
+                                                                </ListItemButton>
+                                                                <Collapse in={isSubExpanded} timeout="auto" unmountOnExit>
+                                                                    <List disablePadding>
+                                                                        {child.children.map((subChild) => {
+                                                                            const isSubChildActive = location.pathname === subChild.path;
+                                                                            return (
+                                                                                <ListItemButton
+                                                                                    key={subChild.text}
+                                                                                    selected={isSubChildActive}
+                                                                                    onClick={() => navigate(subChild.path)}
+                                                                                    sx={{
+                                                                                        minHeight: 34,
+                                                                                        pl: 8,
+                                                                                        pr: 2.5,
+                                                                                        my: 0.1,
+                                                                                        borderLeft: isSubChildActive
+                                                                                            ? `2px solid ${palette.accentPrimary}`
+                                                                                            : '2px solid transparent',
+                                                                                        ml: 3.5,
+                                                                                    }}
+                                                                                >
+                                                                                    <ListItemIcon
+                                                                                        sx={{
+                                                                                            minWidth: 0,
+                                                                                            mr: 1.5,
+                                                                                            justifyContent: 'center',
+                                                                                            color: isSubChildActive ? palette.accentPrimary : 'text.secondary',
+                                                                                        }}
+                                                                                    >
+                                                                                        <subChild.icon sx={{ fontSize: 16 }} />
+                                                                                    </ListItemIcon>
+                                                                                    <ListItemText
+                                                                                        primary={subChild.text}
+                                                                                        primaryTypographyProps={{
+                                                                                            fontSize: '0.75rem',
+                                                                                            fontWeight: isSubChildActive ? 600 : 400,
+                                                                                        }}
+                                                                                    />
+                                                                                </ListItemButton>
+                                                                            );
+                                                                        })}
+                                                                    </List>
+                                                                </Collapse>
+                                                            </Box>
+                                                        );
+                                                    }
+
+                                                    // Simple child item
                                                     const isChildActive = location.pathname === child.path;
                                                     return (
                                                         <ListItemButton
