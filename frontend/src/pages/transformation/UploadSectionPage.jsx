@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
     Box,
     Typography,
@@ -27,7 +27,7 @@ import {
 } from '@mui/icons-material';
 import { alpha } from '@mui/material/styles';
 import { palette } from '../../theme/bloombergTheme';
-import api from '../../api';
+import api from '../../services/api';
 
 const ACCEPTED_FORMATS = '.xlsx,.xls,.csv';
 const FORMAT_LABELS = {
@@ -335,7 +335,7 @@ export default function UploadSectionPage() {
             formData.append('file_type', fileType);
             files.forEach((f) => formData.append('files', f));
 
-            const response = await api.post('/api/transformation/upload/', formData, {
+            const response = await api.post('/transformation/upload/', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
             });
 
@@ -360,7 +360,7 @@ export default function UploadSectionPage() {
     /* Delete a file */
     const handleDelete = async (fileId, fileType) => {
         try {
-            await api.delete(`/api/transformation/files/${fileId}/`);
+            await api.delete(`/transformation/files/${fileId}/`);
             const setFiles = fileType === 'source' ? setSourceFiles : setCanvasFiles;
             setFiles((prev) => prev.filter((f) => f.id !== fileId));
             showMessage('File removed');
@@ -373,8 +373,8 @@ export default function UploadSectionPage() {
     const loadFiles = useCallback(async () => {
         try {
             const [srcRes, canvasRes] = await Promise.all([
-                api.get('/api/transformation/files/?type=source'),
-                api.get('/api/transformation/files/?type=canvas'),
+                api.get('/transformation/files/?type=source'),
+                api.get('/transformation/files/?type=canvas'),
             ]);
             setSourceFiles(srcRes.data);
             setCanvasFiles(canvasRes.data);
@@ -384,7 +384,7 @@ export default function UploadSectionPage() {
     }, []);
 
     // Load on mount
-    useState(() => { loadFiles(); });
+    useEffect(() => { loadFiles(); }, [loadFiles]);
 
     return (
         <Box>
