@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     # Local apps
     'apps.accounts',
     'apps.dashboard',
+    'apps.transformation',
 ]
 
 MIDDLEWARE = [
@@ -149,6 +150,10 @@ USE_TZ = True
 # ===== Static Files =====
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# ===== Media Files (Uploads) =====
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

@@ -24,7 +24,7 @@ const DRAWER_WIDTH_COLLAPSED = 72;
 
 export default function DashboardLayout() {
     const { user, isAuthenticated, loading } = useAuth();
-    const [sidebarOpen, setSidebarOpen] = useState(false); // Collapsed by default
+    const [sidebarOpen, setSidebarOpen] = useState(true); // Expanded by default
 
     if (loading) {
         return (

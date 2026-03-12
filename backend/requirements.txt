@@ -24,3 +24,7 @@ factory-boy==3.3.1
 
 # Server
 gunicorn==23.0.0
+
+# File Processing
+openpyxl==3.1.5
+xlrd==2.0.1
