@@ -131,16 +131,52 @@ class Package(models.Model):
 
 
 class FieldMapping(models.Model):
-    """Maps a source column header to a canvas column header within a package."""
+    """Maps a source column header to a canvas column header within a package.
+    Supports direct mapping, conditional (IF/ELSE) logic, and constant values.
+    """
+
+    class MappingType(models.TextChoices):
+        DIRECT = 'direct', 'Direct Mapping'
+        CONDITION = 'condition', 'Conditional (IF/ELSE)'
+        CONSTANT = 'constant', 'Constant Value'
 
     package = models.ForeignKey(
         Package,
         on_delete=models.CASCADE,
         related_name='field_mappings',
     )
-    source_header = models.CharField(max_length=255, help_text='Column from source file')
+    source_header = models.CharField(
+        max_length=255, blank=True, default='',
+        help_text='Column from source file (used for direct mapping)',
+    )
     canvas_header = models.CharField(max_length=255, help_text='Column from canvas file')
     order = models.PositiveIntegerField(default=0, help_text='Display/export order')
+
+    # ── Mapping logic ──
+    mapping_type = models.CharField(
+        max_length=10, choices=MappingType.choices, default=MappingType.DIRECT,
+    )
+    has_condition = models.BooleanField(
+        default=False,
+        help_text='Toggle: enable conditional logic for this mapping',
+    )
+    condition_json = models.JSONField(
+        null=True, blank=True, default=None,
+        help_text='''Structured condition rules. Example:
+        {
+            "condition_type": "if_else",
+            "source_field": "Debit (DR)",
+            "operator": ">",
+            "compare_value": "0",
+            "then_source": "Debit (DR)",
+            "else_source": "Credit (CR)"
+        }
+        Operators: >, <, >=, <=, ==, !=, contains, not_empty, is_empty''',
+    )
+    constant_value = models.CharField(
+        max_length=500, blank=True, default='',
+        help_text='Fixed value to output when mapping_type is constant',
+    )
 
     class Meta:
         ordering = ['order']
@@ -149,4 +185,55 @@ class FieldMapping(models.Model):
         verbose_name_plural = 'Field Mappings'
 
     def __str__(self):
+        if self.mapping_type == self.MappingType.CONSTANT:
+            return f'"{self.constant_value}" → {self.canvas_header}'
+        if self.has_condition:
+            return f'IF(...) → {self.canvas_header}'
         return f'{self.source_header} → {self.canvas_header}'
+
+
+class InboundFileLog(models.Model):
+    """Stores processed inbound files in PostgreSQL after successful transformation."""
+
+    class Status(models.TextChoices):
+        SUCCESS = 'success', 'Success'
+        FAILED = 'failed', 'Failed'
+
+    class RunType(models.TextChoices):
+        INSTANT = 'instant', 'Instant (File Sense)'
+        SCHEDULED = 'scheduled', 'Scheduled (Batch)'
+        ADHOC = 'adhoc', 'Ad-hoc (Manual)'
+
+    package = models.ForeignKey(
+        Package,
+        on_delete=models.CASCADE,
+        related_name='inbound_logs',
+    )
+    original_filename = models.CharField(max_length=500)
+    file_content = models.BinaryField(
+        help_text='Raw binary content of the processed inbound file',
+    )
+    file_size = models.PositiveIntegerField(default=0, help_text='File size in bytes')
+    file_format = models.CharField(max_length=10, default='csv')
+    output_filename = models.CharField(
+        max_length=500, blank=True, default='',
+        help_text='Name of the generated output file in trfm_outbound',
+    )
+    rows_processed = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.SUCCESS)
+    error_message = models.TextField(blank=True, default='')
+    run_type = models.CharField(
+        max_length=10, choices=RunType.choices, default=RunType.INSTANT,
+        help_text='How the run was triggered: instant (file sense), scheduled (batch), adhoc (manual)',
+    )
+    processed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-processed_at']
+        verbose_name = 'Inbound File Log'
+        verbose_name_plural = 'Inbound File Logs'
+
+    def __str__(self):
+        return f'{self.original_filename} → {self.output_filename} ({self.get_status_display()})'
+
+

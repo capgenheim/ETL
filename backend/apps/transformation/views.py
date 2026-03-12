@@ -1,3 +1,4 @@
+from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
@@ -207,9 +208,13 @@ class FieldMappingListView(APIView):
         for idx, item in enumerate(serializer.validated_data):
             FieldMapping.objects.create(
                 package=package,
-                source_header=item['source_header'],
+                source_header=item.get('source_header', ''),
                 canvas_header=item['canvas_header'],
                 order=item.get('order', idx),
+                mapping_type=item.get('mapping_type', 'direct'),
+                has_condition=item.get('has_condition', False),
+                condition_json=item.get('condition_json'),
+                constant_value=item.get('constant_value', ''),
             )
 
         # Update mapping status
@@ -220,3 +225,90 @@ class FieldMappingListView(APIView):
             FieldMappingSerializer(package.field_mappings.all(), many=True).data,
             status=status.HTTP_201_CREATED,
         )
+
+
+# ─── Ad-hoc Run ─────────────────────────────────────────────────────
+
+class AdHocRunView(APIView):
+    """POST: Manually trigger file processing for a package (emergency ad-hoc)."""
+
+    def post(self, request, pk):
+        import os
+        import fnmatch
+        from django.conf import settings
+        from .tasks import process_inbound_file
+
+        try:
+            package = Package.objects.select_related(
+                'source_file', 'canvas_file'
+            ).get(pk=pk)
+        except Package.DoesNotExist:
+            return Response({'error': 'Package not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if package.mapping_status != Package.MappingStatus.MAPPED:
+            return Response(
+                {'error': 'Package must be mapped before running'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Scan inbound for files matching this package
+        inbound_dir = settings.TRFM_INBOUND_DIR
+        if not os.path.exists(inbound_dir):
+            return Response({'matched': 0, 'message': 'Inbound directory not found'})
+
+        files = [f for f in os.listdir(inbound_dir) if os.path.isfile(os.path.join(inbound_dir, f))]
+        dispatched = 0
+        for filename in files:
+            if fnmatch.fnmatch(filename.lower(), package.file_pattern.lower()):
+                filepath = os.path.join(inbound_dir, filename)
+                process_inbound_file.delay(package.id, filepath, filename, 'adhoc')
+                dispatched += 1
+
+        if dispatched == 0:
+            return Response({
+                'matched': 0,
+                'message': f'No files matching pattern "{package.file_pattern}" found in inbound directory',
+            })
+
+        return Response({
+            'matched': dispatched,
+            'message': f'{dispatched} file(s) dispatched for ad-hoc processing',
+        })
+
+
+# ─── Run Logs ──────────────────────────────────────────────────────
+
+class RunLogView(APIView):
+    """GET: Recent run logs for a package."""
+
+    def get(self, request, pk):
+        from datetime import timedelta
+        from .models import InboundFileLog
+
+        try:
+            package = Package.objects.get(pk=pk)
+        except Package.DoesNotExist:
+            return Response({'error': 'Package not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Only show logs from the last 7 days (data stays in DB, just filtered in view)
+        cutoff = timezone.now() - timedelta(days=7)
+        logs = InboundFileLog.objects.filter(
+            package=package,
+            processed_at__gte=cutoff,
+        ).order_by('-processed_at')[:50]
+        data = [
+            {
+                'id': log.id,
+                'original_filename': log.original_filename,
+                'output_filename': log.output_filename,
+                'status': log.status,
+                'run_type': log.run_type,
+                'rows_processed': log.rows_processed,
+                'file_size': log.file_size,
+                'error_message': log.error_message,
+                'processed_at': log.processed_at.isoformat(),
+            }
+            for log in logs
+        ]
+        return Response(data)
+

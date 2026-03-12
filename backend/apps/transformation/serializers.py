@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import UploadedFile, Package, FieldMapping
+from .models import UploadedFile, Package, FieldMapping, InboundFileLog
 
 
 class UploadedFileSerializer(serializers.ModelSerializer):
@@ -38,7 +38,10 @@ class FileUploadSerializer(serializers.Serializer):
 class FieldMappingSerializer(serializers.ModelSerializer):
     class Meta:
         model = FieldMapping
-        fields = ['id', 'source_header', 'canvas_header', 'order']
+        fields = [
+            'id', 'source_header', 'canvas_header', 'order',
+            'mapping_type', 'has_condition', 'condition_json', 'constant_value',
+        ]
 
 
 class PackageSerializer(serializers.ModelSerializer):
@@ -52,6 +55,7 @@ class PackageSerializer(serializers.ModelSerializer):
     created_by_name = serializers.SerializerMethodField()
     created_by_email = serializers.CharField(source='created_by.email', read_only=True)
     batch_mode_display = serializers.CharField(source='get_batch_mode_display', read_only=True)
+    run_log_summary = serializers.SerializerMethodField()
 
     class Meta:
         model = Package
@@ -66,6 +70,7 @@ class PackageSerializer(serializers.ModelSerializer):
             'mapping_status', 'mapping_status_display',
             'field_mappings',
             'created_by_name', 'created_by_email',
+            'run_log_summary',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
@@ -75,6 +80,7 @@ class PackageSerializer(serializers.ModelSerializer):
             'status_display', 'mapping_status_display', 'batch_mode_display',
             'field_mappings',
             'created_by_name', 'created_by_email',
+            'run_log_summary',
             'created_at', 'updated_at',
         ]
 
@@ -82,3 +88,19 @@ class PackageSerializer(serializers.ModelSerializer):
         user = obj.created_by
         full = f'{user.first_name} {user.last_name}'.strip()
         return full or user.username
+
+    def get_run_log_summary(self, obj):
+        logs = InboundFileLog.objects.filter(package=obj)
+        total = logs.count()
+        success = logs.filter(status='success').count()
+        failed = logs.filter(status='failed').count()
+        last_run = logs.first()  # Already ordered by -processed_at
+        return {
+            'total': total,
+            'success': success,
+            'failed': failed,
+            'last_run': last_run.processed_at.isoformat() if last_run else None,
+            'last_status': last_run.status if last_run else None,
+            'last_run_type': last_run.run_type if last_run else None,
+        }
+

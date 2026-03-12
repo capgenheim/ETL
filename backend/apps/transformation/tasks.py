@@ -47,7 +47,7 @@ def file_sense_scan():
             if fnmatch.fnmatch(filename.lower(), package.file_pattern.lower()):
                 # Dispatch processing task
                 filepath = os.path.join(inbound_dir, filename)
-                process_inbound_file.delay(package.id, filepath, filename)
+                process_inbound_file.delay(package.id, filepath, filename, 'instant')
                 matched += 1
                 break  # One file matches one package
 
@@ -55,15 +55,16 @@ def file_sense_scan():
 
 
 @shared_task(name='transformation.process_inbound_file', bind=True, max_retries=3)
-def process_inbound_file(self, package_id, filepath, original_filename):
+def process_inbound_file(self, package_id, filepath, original_filename, run_type='instant'):
     """
     Process a single inbound file:
     1. Read the source file
-    2. Apply field mappings (source_header → canvas_header)
+    2. Apply field mappings — unmapped canvas columns output blank
     3. Write transformed output to trfm_outbound
-    4. Archive/move the processed inbound file
+    4. Save inbound file to PostgreSQL (InboundFileLog)
+    5. Delete inbound file from disk
     """
-    from .models import Package, FieldMapping
+    from .models import Package, InboundFileLog
 
     try:
         package = Package.objects.select_related(
@@ -80,15 +81,17 @@ def process_inbound_file(self, package_id, filepath, original_filename):
     package.save(update_fields=['status', 'updated_at'])
 
     try:
-        # Get field mappings
-        mappings = list(
+        # Get ALL canvas headers from the canvas file
+        all_canvas_headers = package.canvas_file.headers_json or []
+
+        # Get field mappings as dict keyed by canvas_header
+        mappings_qs = list(
             package.field_mappings.all()
             .order_by('order')
-            .values_list('source_header', 'canvas_header')
+            .values('source_header', 'canvas_header', 'mapping_type',
+                    'has_condition', 'condition_json', 'constant_value')
         )
-
-        if not mappings:
-            return {'error': 'No field mappings configured'}
+        mapping_by_canvas = {m['canvas_header']: m for m in mappings_qs}
 
         # Read source data
         source_data = _read_file(filepath, original_filename)
@@ -96,8 +99,24 @@ def process_inbound_file(self, package_id, filepath, original_filename):
         if not source_data:
             return {'error': 'No data in source file'}
 
-        # Transform: remap columns
-        transformed = _transform_data(source_data, mappings)
+        # Build full mappings list: mapped fields use their config, unmapped → blank
+        full_mappings = []
+        for ch in all_canvas_headers:
+            if ch in mapping_by_canvas:
+                full_mappings.append(mapping_by_canvas[ch])
+            else:
+                # Unmapped canvas column → blank for every row
+                full_mappings.append({
+                    'canvas_header': ch,
+                    'source_header': '',
+                    'mapping_type': 'constant',
+                    'has_condition': False,
+                    'condition_json': None,
+                    'constant_value': '',
+                })
+
+        # Transform: remap columns (includes blanks for unmapped)
+        transformed = _transform_data(source_data, full_mappings)
 
         # Generate output filename: <prefix><ddmmyyyyhhmmss>.<format>
         now = timezone.localtime()
@@ -108,11 +127,28 @@ def process_inbound_file(self, package_id, filepath, original_filename):
         # Write output
         _write_file(output_path, transformed, package.output_format)
 
-        # Move processed file to archive (subfolder in inbound)
-        archive_dir = os.path.join(settings.TRFM_INBOUND_DIR, '_processed')
-        os.makedirs(archive_dir, exist_ok=True)
-        archived_name = f'{timestamp}_{original_filename}'
-        shutil.move(filepath, os.path.join(archive_dir, archived_name))
+        # Read inbound file binary content before deleting
+        with open(filepath, 'rb') as f:
+            file_bytes = f.read()
+
+        file_ext = os.path.splitext(original_filename)[1].lower().lstrip('.')
+        rows_processed = len(transformed) - 1  # Exclude header row
+
+        # Save inbound file to PostgreSQL
+        InboundFileLog.objects.create(
+            package=package,
+            original_filename=original_filename,
+            file_content=file_bytes,
+            file_size=len(file_bytes),
+            run_type=run_type,
+            file_format=file_ext or 'csv',
+            output_filename=output_filename,
+            rows_processed=rows_processed,
+            status=InboundFileLog.Status.SUCCESS,
+        )
+
+        # Delete inbound file from disk
+        os.remove(filepath)
 
         # Restore package status to active
         package.status = Package.Status.ACTIVE
@@ -121,10 +157,26 @@ def process_inbound_file(self, package_id, filepath, original_filename):
         return {
             'success': True,
             'output_file': output_filename,
-            'rows_processed': len(transformed) - 1,  # Exclude header row
+            'rows_processed': rows_processed,
+            'stored_in_db': True,
         }
 
     except Exception as exc:
+        # Log failure to DB if possible
+        try:
+            from .models import InboundFileLog
+            InboundFileLog.objects.create(
+                package=package,
+                original_filename=original_filename,
+                file_content=b'',
+                file_size=0,
+                status=InboundFileLog.Status.FAILED,
+                run_type=run_type,
+                error_message=str(exc),
+            )
+        except Exception:
+            pass
+
         # Restore status on failure
         package.status = Package.Status.ACTIVE
         package.save(update_fields=['status', 'updated_at'])
@@ -165,21 +217,122 @@ def _read_file(filepath, filename):
 
 
 def _transform_data(source_data, mappings):
-    """Apply field mappings to transform source data to canvas schema."""
-    # mappings is list of (source_header, canvas_header)
-    canvas_headers = [m[1] for m in mappings]
+    """Apply field mappings to transform source data to canvas schema.
+    Supports direct mapping, conditional IF/ELSE, and constant values.
+    mappings is a list of dicts with keys: source_header, canvas_header,
+    mapping_type, has_condition, condition_json, constant_value.
+    """
+    canvas_headers = [m['canvas_header'] for m in mappings]
     transformed = [canvas_headers]  # Header row
 
     for row in source_data:
         new_row = []
-        for source_h, canvas_h in mappings:
-            value = row.get(source_h, '')
-            if value is None:
-                value = ''
-            new_row.append(value)
+        for m in mappings:
+            mtype = m.get('mapping_type', 'direct')
+
+            # ── Constant: fixed value for every row ──
+            if mtype == 'constant':
+                new_row.append(m.get('constant_value', ''))
+
+            # ── Conditional: evaluate IF / IF-ELSE ──
+            elif mtype == 'condition' and m.get('has_condition') and m.get('condition_json'):
+                cond = m['condition_json']
+                try:
+                    result = _evaluate_condition(row, cond)
+                    new_row.append(result if result is not None else '')
+                except Exception:
+                    new_row.append('')
+
+            # ── Direct: simple column copy ──
+            else:
+                value = row.get(m.get('source_header', ''), '')
+                new_row.append(value if value is not None else '')
+
         transformed.append(new_row)
 
     return transformed
+
+
+def _evaluate_condition(row, cond):
+    """Evaluate a single IF or IF-ELSE condition against a data row.
+
+    cond schema:
+    {
+        "condition_type": "if_else" | "if_only",
+        "source_field": "Debit (DR)",   # field to test
+        "operator": ">",                 # comparison operator
+        "compare_value": "0",            # value to compare against
+        "then_source": "Debit (DR)",     # field to use if true (optional)
+        "then_value": "DEBIT",           # literal value if true (optional)
+        "else_source": "Credit (CR)",    # field to use if false (optional)
+        "else_value": "",                # literal value if false (optional)
+    }
+    """
+    source_field = cond.get('source_field', '')
+    operator = cond.get('operator', '==')
+    compare_value = cond.get('compare_value', '')
+    condition_type = cond.get('condition_type', 'if_else')
+
+    cell_raw = row.get(source_field, '')
+    if cell_raw is None:
+        cell_raw = ''
+
+    # Evaluate condition
+    condition_met = _compare(cell_raw, operator, compare_value)
+
+    if condition_met:
+        # THEN branch: use then_source field or then_value literal
+        if 'then_source' in cond and cond['then_source']:
+            val = row.get(cond['then_source'], '')
+            return val if val is not None else ''
+        return cond.get('then_value', '')
+    else:
+        if condition_type == 'if_only':
+            return ''  # No else branch — leave blank
+        # ELSE branch: use else_source field or else_value literal
+        if 'else_source' in cond and cond['else_source']:
+            val = row.get(cond['else_source'], '')
+            return val if val is not None else ''
+        return cond.get('else_value', '')
+
+
+def _compare(cell_raw, operator, compare_value):
+    """Compare cell_raw against compare_value using the given operator."""
+    # Try numeric comparison first
+    try:
+        num_cell = float(str(cell_raw))
+        num_comp = float(str(compare_value))
+        if operator == '>':
+            return num_cell > num_comp
+        elif operator == '<':
+            return num_cell < num_comp
+        elif operator == '>=':
+            return num_cell >= num_comp
+        elif operator == '<=':
+            return num_cell <= num_comp
+        elif operator == '==':
+            return num_cell == num_comp
+        elif operator == '!=':
+            return num_cell != num_comp
+    except (ValueError, TypeError):
+        pass
+
+    # String-based comparison
+    str_cell = str(cell_raw).strip()
+    str_comp = str(compare_value).strip()
+
+    if operator == '==':
+        return str_cell == str_comp
+    elif operator == '!=':
+        return str_cell != str_comp
+    elif operator == 'contains':
+        return str_comp.lower() in str_cell.lower()
+    elif operator == 'not_empty':
+        return bool(str_cell)
+    elif operator == 'is_empty':
+        return not bool(str_cell)
+
+    return False
 
 
 def _write_file(output_path, data, fmt):

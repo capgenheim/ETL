@@ -40,3 +40,10 @@ docker-data/
 
 # Test files for mapping
 testfilesmapping/
+
+# Dev README (contains credentials)
+dev_README.md
+
+# Transformation file processing dirs
+trfm_inbound/
+trfm_outbound/

@@ -14,9 +14,14 @@ urlpatterns = [
     # Field mappings (MUST come before the <str:action> catch-all)
     path('packages/<int:pk>/mappings/', views.FieldMappingListView.as_view(), name='field-mapping-list'),
 
+    # Ad-hoc run & run logs (MUST come before the <str:action> catch-all)
+    path('packages/<int:pk>/adhoc-run/', views.AdHocRunView.as_view(), name='package-adhoc-run'),
+    path('packages/<int:pk>/run-logs/', views.RunLogView.as_view(), name='package-run-logs'),
+
     # Package detail (retrieve/update/delete)
     path('packages/<int:pk>/', views.PackageDetailView.as_view(), name='package-detail'),
 
     # Package status control (start/pause/stop)
     path('packages/<int:pk>/<str:action>/', views.PackageStatusView.as_view(), name='package-status'),
 ]
+

@@ -13,6 +13,13 @@ import {
     Fade,
     TablePagination,
     InputAdornment,
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    List,
+    ListItem,
+    ListItemText,
+    Badge,
 } from '@mui/material';
 import {
     PlayArrow as PlayIcon,
@@ -23,6 +30,11 @@ import {
     AddBox as AddIcon,
     Pattern as PatternIcon,
     SwapHoriz as MapIcon,
+    RocketLaunch as AdhocIcon,
+    Close as CloseIcon,
+    CheckCircle as SuccessIcon,
+    Error as FailIcon,
+    Assignment as AuditLogIcon,
 } from '@mui/icons-material';
 import { alpha } from '@mui/material/styles';
 import { palette } from '../../theme/bloombergTheme';
@@ -94,8 +106,262 @@ function MappingChip({ mappingStatus }) {
     );
 }
 
+/* ─── Run Log Badge (Circle) ──────────────────────────────────── */
+function RunLogBadge({ summary, onOpenLogs }) {
+    const total = summary?.total || 0;
+    const success = summary?.success || 0;
+    const failed = summary?.failed || 0;
+
+    if (total === 0) {
+        return (
+            <Tooltip title="No runs yet">
+                <Box
+                    sx={{
+                        width: 32, height: 32,
+                        borderRadius: '50%',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        backgroundColor: alpha(palette.textDisabled, 0.08),
+                        border: `2px solid ${alpha(palette.textDisabled, 0.2)}`,
+                        cursor: 'default',
+                    }}
+                >
+                    <Typography sx={{ fontSize: '0.6rem', fontWeight: 700, color: palette.textDisabled }}>
+                        0
+                    </Typography>
+                </Box>
+            </Tooltip>
+        );
+    }
+
+    const hasFailures = failed > 0;
+    const allSuccess = failed === 0 && total > 0;
+    const circleColor = hasFailures ? palette.error : palette.success;
+    const runTypeLabel = {
+        instant: '⚡ Instant',
+        scheduled: '⏰ Scheduled',
+        adhoc: '🚀 Ad-hoc',
+    };
+
+    return (
+        <Tooltip
+            title={
+                <Box sx={{ fontSize: '0.7rem', lineHeight: 1.6 }}>
+                    <Box>✅ Success: {success}</Box>
+                    {failed > 0 && <Box>❌ Failed: {failed}</Box>}
+                    <Box>Total: {total}</Box>
+                    {summary?.last_run_type && (
+                        <Box>Last: {runTypeLabel[summary.last_run_type] || summary.last_run_type}</Box>
+                    )}
+                </Box>
+            }
+        >
+            <Badge
+                badgeContent={failed > 0 ? failed : null}
+                color="error"
+                sx={{
+                    cursor: 'pointer',
+                    '& .MuiBadge-badge': {
+                        fontSize: '0.55rem',
+                        height: 14, minWidth: 14,
+                        fontWeight: 700,
+                    },
+                }}
+                onClick={() => onOpenLogs()}
+            >
+                <Box
+                    onClick={() => onOpenLogs()}
+                    sx={{
+                        width: 32, height: 32,
+                        borderRadius: '50%',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        backgroundColor: alpha(circleColor, 0.1),
+                        border: `2px solid ${alpha(circleColor, 0.5)}`,
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        '&:hover': {
+                            backgroundColor: alpha(circleColor, 0.2),
+                            transform: 'scale(1.1)',
+                        },
+                    }}
+                >
+                    <Typography
+                        sx={{
+                            fontSize: '0.65rem',
+                            fontWeight: 800,
+                            fontFamily: '"JetBrains Mono", monospace',
+                            color: circleColor,
+                        }}
+                    >
+                        {total}
+                    </Typography>
+                </Box>
+            </Badge>
+        </Tooltip>
+    );
+}
+
+/* ─── Run Logs Dialog ─────────────────────────────────────────── */
+function RunLogsDialog({ open, onClose, packageName, packageId }) {
+    const [logs, setLogs] = useState([]);
+
+    useEffect(() => {
+        if (open && packageId) {
+            api.get(`/transformation/packages/${packageId}/run-logs/`)
+                .then((res) => setLogs(res.data))
+                .catch(() => {});
+        }
+    }, [open, packageId]);
+
+    const runTypeConfig = {
+        instant: { label: '⚡ Instant', color: palette.success },
+        scheduled: { label: '⏰ Scheduled', color: palette.accentPrimary },
+        adhoc: { label: '🚀 Ad-hoc', color: '#c586c0' },
+    };
+
+    const statusConfig = {
+        success: { label: '✅ Success', color: palette.success },
+        failed: { label: '❌ Failed', color: palette.error },
+    };
+
+    return (
+        <Dialog
+            open={open}
+            onClose={onClose}
+            maxWidth="sm"
+            fullWidth
+            PaperProps={{
+                sx: {
+                    backgroundColor: palette.bgPrimary,
+                    border: `1px solid ${palette.border}`,
+                    borderRadius: 2,
+                    backgroundImage: 'none',
+                },
+            }}
+        >
+            <DialogTitle
+                sx={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    borderBottom: `1px solid ${palette.border}`, py: 1.5,
+                }}
+            >
+                <Box>
+                    <Typography sx={{ fontWeight: 700, color: palette.textPrimary, fontSize: '0.95rem' }}>
+                        Run Logs — {packageName}
+                    </Typography>
+                    <Typography sx={{ fontSize: '0.65rem', color: 'text.secondary', fontFamily: '"JetBrains Mono", monospace', mt: 0.25 }}>
+                        {(() => {
+                            const now = new Date();
+                            const from = new Date(now);
+                            from.setDate(from.getDate() - 7);
+                            const fmt = (d) => `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+                            return `${fmt(from)} → ${fmt(now)} (7 days) • ${logs.length} record${logs.length !== 1 ? 's' : ''}`;
+                        })()}
+                    </Typography>
+                </Box>
+                <IconButton onClick={onClose} size="small" sx={{ color: 'text.secondary' }}>
+                    <CloseIcon fontSize="small" />
+                </IconButton>
+            </DialogTitle>
+            <DialogContent sx={{ p: 0, maxHeight: 420 }}>
+                {logs.length === 0 ? (
+                    <Box sx={{ p: 3, textAlign: 'center' }}>
+                        <Typography variant="body2" color="text.secondary">No runs in the last 7 days.</Typography>
+                    </Box>
+                ) : (
+                    <List dense sx={{ p: 0 }}>
+                        {logs.map((log) => {
+                            const rtCfg = runTypeConfig[log.run_type] || runTypeConfig.instant;
+                            const stCfg = statusConfig[log.status] || statusConfig.success;
+                            return (
+                                <ListItem
+                                    key={log.id}
+                                    sx={{
+                                        borderBottom: `1px solid ${palette.border}`,
+                                        py: 1, px: 2,
+                                        flexDirection: 'column',
+                                        alignItems: 'flex-start',
+                                    }}
+                                >
+                                    {/* Row 1: icon + filename + status chip + run type chip */}
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+                                        {log.status === 'success' ? (
+                                            <SuccessIcon sx={{ fontSize: 20, color: palette.success, flexShrink: 0 }} />
+                                        ) : (
+                                            <FailIcon sx={{ fontSize: 20, color: palette.error, flexShrink: 0 }} />
+                                        )}
+                                        <Typography
+                                            sx={{
+                                                fontSize: '0.75rem',
+                                                fontFamily: '"JetBrains Mono", monospace',
+                                                fontWeight: 600,
+                                                color: palette.textPrimary,
+                                                flex: 1,
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                                whiteSpace: 'nowrap',
+                                            }}
+                                        >
+                                            {log.original_filename}
+                                        </Typography>
+                                        <Chip
+                                            label={stCfg.label}
+                                            size="small"
+                                            sx={{
+                                                height: 18, fontSize: '0.55rem',
+                                                fontWeight: 700,
+                                                backgroundColor: alpha(stCfg.color, 0.12),
+                                                color: stCfg.color,
+                                                border: `1px solid ${alpha(stCfg.color, 0.3)}`,
+                                                '& .MuiChip-label': { px: 0.5 },
+                                            }}
+                                        />
+                                        <Chip
+                                            label={rtCfg.label}
+                                            size="small"
+                                            sx={{
+                                                height: 18, fontSize: '0.55rem',
+                                                fontWeight: 700,
+                                                backgroundColor: alpha(rtCfg.color, 0.12),
+                                                color: rtCfg.color,
+                                                '& .MuiChip-label': { px: 0.5 },
+                                            }}
+                                        />
+                                    </Box>
+                                    {/* Row 2: output details */}
+                                    <Box sx={{ display: 'flex', gap: 2, mt: 0.5, pl: 3.5 }}>
+                                        <Typography variant="caption" color="text.secondary">
+                                            → {log.output_filename || 'N/A'}
+                                        </Typography>
+                                        <Typography variant="caption" color="text.secondary">
+                                            {log.rows_processed} rows
+                                        </Typography>
+                                        <Typography variant="caption" color="text.secondary">
+                                            {new Date(log.processed_at).toLocaleString()}
+                                        </Typography>
+                                    </Box>
+                                    {/* Row 3: error message if failed */}
+                                    {log.status === 'failed' && log.error_message && (
+                                        <Box sx={{ mt: 0.5, pl: 3.5 }}>
+                                            <Typography
+                                                variant="caption"
+                                                sx={{ color: palette.error, fontSize: '0.65rem', fontFamily: '"JetBrains Mono", monospace' }}
+                                            >
+                                                Error: {log.error_message}
+                                            </Typography>
+                                        </Box>
+                                    )}
+                                </ListItem>
+                            );
+                        })}
+                    </List>
+                )}
+            </DialogContent>
+        </Dialog>
+    );
+}
+
 /* ─── Action Buttons ──────────────────────────────────────────── */
-function ActionButtons({ pkg, onAction, onEdit, onMap }) {
+function ActionButtons({ pkg, onAction, onEdit, onMap, onAdhocRun, onOpenLogs }) {
     const btnSx = (color) => ({
         width: 30, height: 30,
         color: 'text.secondary',
@@ -159,17 +425,50 @@ function ActionButtons({ pkg, onAction, onEdit, onMap }) {
                     <EditIcon sx={{ fontSize: 18 }} />
                 </IconButton>
             </Tooltip>
+            <Tooltip title="Ad-hoc Run (Manual emergency trigger)">
+                <span>
+                    <IconButton
+                        size="small"
+                        sx={{
+                            ...btnSx('#c586c0'),
+                            '&:hover': {
+                                color: '#c586c0',
+                                backgroundColor: alpha('#c586c0', 0.1),
+                            },
+                        }}
+                        disabled={pkg.mapping_status === 'unmapped'}
+                        onClick={() => onAdhocRun(pkg.id, pkg.name)}
+                    >
+                        <AdhocIcon sx={{ fontSize: 18 }} />
+                    </IconButton>
+                </span>
+            </Tooltip>
+            <Tooltip title="Audit Log">
+                <IconButton
+                    size="small"
+                    sx={{
+                        ...btnSx('#4fc3f7'),
+                        '&:hover': {
+                            color: '#4fc3f7',
+                            backgroundColor: alpha('#4fc3f7', 0.1),
+                        },
+                    }}
+                    onClick={() => onOpenLogs(pkg.id, pkg.name)}
+                >
+                    <AuditLogIcon sx={{ fontSize: 18 }} />
+                </IconButton>
+            </Tooltip>
         </Box>
     );
 }
 
 /* ─── Package Row ─────────────────────────────────────────────── */
-function PackageRow({ pkg, index, onAction, onEdit, onMap }) {
+function PackageRow({ pkg, index, onAction, onEdit, onMap, onAdhocRun, onOpenLogs }) {
     return (
         <Box
             sx={{
                 display: 'grid',
-                gridTemplateColumns: '40px 1.5fr 1fr 0.8fr 0.8fr 0.6fr 0.7fr 1fr 200px',
+                gridTemplateColumns: '40px 1.5fr 1fr 0.7fr 0.7fr 0.6fr 0.6fr 45px 0.9fr 260px',
                 alignItems: 'center',
                 gap: 1.5,
                 px: 2,
@@ -260,6 +559,14 @@ function PackageRow({ pkg, index, onAction, onEdit, onMap }) {
             {/* Mapping */}
             <MappingChip mappingStatus={pkg.mapping_status} />
 
+            {/* Run Log Badge */}
+            <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+                <RunLogBadge
+                    summary={pkg.run_log_summary}
+                    onOpenLogs={() => onOpenLogs(pkg.id, pkg.name)}
+                />
+            </Box>
+
             {/* Created By */}
             <Tooltip title={pkg.created_by_email || ''}>
                 <Typography
@@ -277,7 +584,14 @@ function PackageRow({ pkg, index, onAction, onEdit, onMap }) {
             </Tooltip>
 
             {/* Actions */}
-            <ActionButtons pkg={pkg} onAction={onAction} onEdit={onEdit} onMap={onMap} />
+            <ActionButtons
+                pkg={pkg}
+                onAction={onAction}
+                onEdit={onEdit}
+                onMap={onMap}
+                onAdhocRun={onAdhocRun}
+                onOpenLogs={onOpenLogs}
+            />
         </Box>
     );
 }
@@ -289,6 +603,7 @@ export default function PackageListPage() {
     const [search, setSearch] = useState('');
     const [page, setPage] = useState(0);
     const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+    const [logsDialog, setLogsDialog] = useState({ open: false, packageId: null, packageName: '' });
 
     const fetchPackages = useCallback(async () => {
         try {
@@ -332,6 +647,38 @@ export default function PackageListPage() {
                 severity: 'error',
             });
         }
+    };
+
+    const handleAdhocRun = async (id, name) => {
+        try {
+            const res = await api.post(`/transformation/packages/${id}/adhoc-run/`);
+            const { matched, message } = res.data;
+            if (matched > 0) {
+                setSnackbar({
+                    open: true,
+                    message: `🚀 ${message}`,
+                    severity: 'success',
+                });
+            } else {
+                setSnackbar({
+                    open: true,
+                    message: message || 'No matching files found in inbound directory',
+                    severity: 'warning',
+                });
+            }
+            // Refresh after a delay to capture run logs
+            setTimeout(fetchPackages, 2000);
+        } catch (err) {
+            setSnackbar({
+                open: true,
+                message: err.response?.data?.error || 'Ad-hoc run failed',
+                severity: 'error',
+            });
+        }
+    };
+
+    const handleOpenLogs = (packageId, packageName) => {
+        setLogsDialog({ open: true, packageId, packageName });
     };
 
     const headerCellSx = {
@@ -429,7 +776,7 @@ export default function PackageListPage() {
                 <Box
                     sx={{
                         display: 'grid',
-                        gridTemplateColumns: '40px 1.5fr 1fr 0.8fr 0.8fr 0.6fr 0.7fr 1fr 200px',
+                        gridTemplateColumns: '40px 1.5fr 1fr 0.7fr 0.7fr 0.6fr 0.6fr 45px 0.9fr 260px',
                         gap: 1.5,
                         px: 2,
                         py: 1,
@@ -444,6 +791,7 @@ export default function PackageListPage() {
                     <Typography sx={headerCellSx}>Mode</Typography>
                     <Typography sx={headerCellSx}>Status</Typography>
                     <Typography sx={headerCellSx}>Mapping</Typography>
+                    <Typography sx={{ ...headerCellSx, textAlign: 'center' }}>Runs</Typography>
                     <Typography sx={headerCellSx}>Created By</Typography>
                     <Typography sx={{ ...headerCellSx, textAlign: 'right', pr: 1 }}>Actions</Typography>
                 </Box>
@@ -458,6 +806,8 @@ export default function PackageListPage() {
                             onAction={handleAction}
                             onEdit={(id) => navigate(`/transformation/packages/${id}/edit`)}
                             onMap={(id) => navigate(`/transformation/packages/${id}/mapping`)}
+                            onAdhocRun={handleAdhocRun}
+                            onOpenLogs={handleOpenLogs}
                         />
                     ))
                 ) : (
@@ -510,6 +860,14 @@ export default function PackageListPage() {
                     />
                 </Box>
             </Paper>
+
+            {/* Run Logs Dialog */}
+            <RunLogsDialog
+                open={logsDialog.open}
+                onClose={() => setLogsDialog({ open: false, packageId: null, packageName: '' })}
+                packageName={logsDialog.packageName}
+                packageId={logsDialog.packageId}
+            />
 
             {/* Snackbar */}
             <Snackbar
