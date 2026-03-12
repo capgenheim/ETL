@@ -12,18 +12,11 @@ import {
     Divider,
     Typography,
     Avatar,
-    Collapse,
+    Stack,
     Fade,
 } from '@mui/material';
 import {
     Dashboard as DashboardIcon,
-    Transform as TransformIcon,
-    UploadFile as UploadFileIcon,
-    AddBox as AddBoxIcon,
-    ListAlt as ListAltIcon,
-    Policy as AuditIcon,
-    ExpandLess,
-    ExpandMore,
     Logout as LogoutIcon,
     DataObject as DataObjectIcon,
 } from '@mui/icons-material';
@@ -33,45 +26,19 @@ import { palette } from '../theme/bloombergTheme';
 const DRAWER_WIDTH_EXPANDED = 260;
 const DRAWER_WIDTH_COLLAPSED = 72;
 
-// Navigation structure — `roles` restricts visibility (omit for all roles)
 const navItems = [
     { text: 'Dashboard', icon: DashboardIcon, path: '/dashboard' },
-    {
-        text: 'Transformation',
-        icon: TransformIcon,
-        roles: ['user'],
-        children: [
-            { text: 'File Upload', icon: UploadFileIcon, path: '/transformation/file-upload' },
-            { text: 'Create Package', icon: AddBoxIcon, path: '/transformation/create-package' },
-            { text: 'Package List', icon: ListAltIcon, path: '/transformation/package-list' },
-        ],
-    },
-    { text: 'Audit', icon: AuditIcon, path: '/audit', roles: ['user'] },
 ];
 
 export default function Sidebar({ open }) {
     const navigate = useNavigate();
     const location = useLocation();
     const { user, logout } = useAuth();
-    const [expandedMenus, setExpandedMenus] = useState({});
 
     const handleLogout = async () => {
         await logout();
         navigate('/login', { replace: true });
     };
-
-    const toggleMenu = (text) => {
-        setExpandedMenus((prev) => ({ ...prev, [text]: !prev[text] }));
-    };
-
-    // Check if a parent group has an active child
-    const isGroupActive = (children) =>
-        children?.some((child) => location.pathname === child.path);
-
-    // Filter nav items based on user role
-    const visibleNavItems = navItems.filter(
-        (item) => !item.roles || item.roles.includes(user?.role)
-    );
 
     const drawerWidth = open ? DRAWER_WIDTH_EXPANDED : DRAWER_WIDTH_COLLAPSED;
 
@@ -140,118 +107,7 @@ export default function Sidebar({ open }) {
             {/* Navigation Items */}
             <Box sx={{ flex: 1, py: 1 }}>
                 <List disablePadding>
-                    {visibleNavItems.map((item) => {
-                        // Item with children (expandable group)
-                        if (item.children) {
-                            const groupActive = isGroupActive(item.children);
-                            const isExpanded = expandedMenus[item.text] ?? groupActive;
-
-                            return (
-                                <Box key={item.text}>
-                                    <Tooltip
-                                        title={!open ? item.text : ''}
-                                        placement="right"
-                                        arrow
-                                    >
-                                        <ListItemButton
-                                            onClick={() => {
-                                                if (open) {
-                                                    toggleMenu(item.text);
-                                                } else {
-                                                    // When collapsed, navigate to first child
-                                                    navigate(item.children[0].path);
-                                                }
-                                            }}
-                                            sx={{
-                                                minHeight: 44,
-                                                px: open ? 2.5 : 0,
-                                                justifyContent: open ? 'initial' : 'center',
-                                                my: 0.3,
-                                                ...(groupActive && !open && {
-                                                    backgroundColor: alpha(palette.accentPrimary, 0.08),
-                                                }),
-                                            }}
-                                        >
-                                            <ListItemIcon
-                                                sx={{
-                                                    minWidth: 0,
-                                                    mr: open ? 2 : 0,
-                                                    justifyContent: 'center',
-                                                    color: groupActive ? palette.accentPrimary : 'text.secondary',
-                                                    transition: 'color 0.2s',
-                                                }}
-                                            >
-                                                <item.icon sx={{ fontSize: 22 }} />
-                                            </ListItemIcon>
-                                            {open && (
-                                                <>
-                                                    <ListItemText
-                                                        primary={item.text}
-                                                        primaryTypographyProps={{
-                                                            fontSize: '0.875rem',
-                                                            fontWeight: groupActive ? 600 : 400,
-                                                        }}
-                                                    />
-                                                    {isExpanded ? (
-                                                        <ExpandLess sx={{ fontSize: 18, color: 'text.secondary' }} />
-                                                    ) : (
-                                                        <ExpandMore sx={{ fontSize: 18, color: 'text.secondary' }} />
-                                                    )}
-                                                </>
-                                            )}
-                                        </ListItemButton>
-                                    </Tooltip>
-
-                                    {/* Sub-items */}
-                                    {open && (
-                                        <Collapse in={isExpanded} timeout="auto" unmountOnExit>
-                                            <List disablePadding>
-                                                {item.children.map((child) => {
-                                                    const isChildActive = location.pathname === child.path;
-                                                    return (
-                                                        <ListItemButton
-                                                            key={child.text}
-                                                            selected={isChildActive}
-                                                            onClick={() => navigate(child.path)}
-                                                            sx={{
-                                                                minHeight: 38,
-                                                                pl: 5.5,
-                                                                pr: 2.5,
-                                                                my: 0.15,
-                                                                borderLeft: isChildActive
-                                                                    ? `2px solid ${palette.accentPrimary}`
-                                                                    : '2px solid transparent',
-                                                                ml: 2.5,
-                                                            }}
-                                                        >
-                                                            <ListItemIcon
-                                                                sx={{
-                                                                    minWidth: 0,
-                                                                    mr: 1.5,
-                                                                    justifyContent: 'center',
-                                                                    color: isChildActive ? palette.accentPrimary : 'text.secondary',
-                                                                }}
-                                                            >
-                                                                <child.icon sx={{ fontSize: 18 }} />
-                                                            </ListItemIcon>
-                                                            <ListItemText
-                                                                primary={child.text}
-                                                                primaryTypographyProps={{
-                                                                    fontSize: '0.8125rem',
-                                                                    fontWeight: isChildActive ? 600 : 400,
-                                                                }}
-                                                            />
-                                                        </ListItemButton>
-                                                    );
-                                                })}
-                                            </List>
-                                        </Collapse>
-                                    )}
-                                </Box>
-                            );
-                        }
-
-                        // Simple nav item
+                    {navItems.map((item) => {
                         const isActive = location.pathname === item.path;
                         return (
                             <Tooltip
@@ -299,6 +155,7 @@ export default function Sidebar({ open }) {
 
             {/* Bottom Section */}
             <Box>
+
                 <Divider sx={{ borderColor: palette.border }} />
 
                 {/* User Profile */}
