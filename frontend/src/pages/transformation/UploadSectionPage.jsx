@@ -408,7 +408,10 @@ export default function UploadSectionPage() {
                 <Button
                     variant="contained"
                     startIcon={<SaveIcon />}
-                    onClick={() => showMessage('All changes saved successfully')}
+                    onClick={async () => {
+                        await loadFiles();
+                        showMessage('All changes saved successfully');
+                    }}
                     sx={{
                         px: 3,
                         py: 1,
