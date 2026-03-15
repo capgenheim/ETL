@@ -192,6 +192,28 @@ class FieldMapping(models.Model):
         return f'{self.source_header} → {self.canvas_header}'
 
 
+class FileTag(models.Model):
+    """Tags for categorising processed inbound files."""
+    name = models.CharField(max_length=100, unique=True)
+    color = models.CharField(
+        max_length=7, default='#40c4ff',
+        help_text='Hex colour code for the tag chip',
+    )
+    auto_created = models.BooleanField(
+        default=False,
+        help_text='True if the tag was generated automatically by the system',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name = 'File Tag'
+        verbose_name_plural = 'File Tags'
+
+    def __str__(self):
+        return self.name
+
+
 class InboundFileLog(models.Model):
     """Stores processed inbound files in PostgreSQL after successful transformation."""
 
@@ -203,11 +225,13 @@ class InboundFileLog(models.Model):
         INSTANT = 'instant', 'Instant (File Sense)'
         SCHEDULED = 'scheduled', 'Scheduled (Batch)'
         ADHOC = 'adhoc', 'Ad-hoc (Manual)'
+        SWIFT = 'swift', 'SWIFT Message'
 
     package = models.ForeignKey(
         Package,
         on_delete=models.CASCADE,
         related_name='inbound_logs',
+        null=True, blank=True,
     )
     original_filename = models.CharField(max_length=500)
     file_content = models.BinaryField(
@@ -224,8 +248,9 @@ class InboundFileLog(models.Model):
     error_message = models.TextField(blank=True, default='')
     run_type = models.CharField(
         max_length=10, choices=RunType.choices, default=RunType.INSTANT,
-        help_text='How the run was triggered: instant (file sense), scheduled (batch), adhoc (manual)',
+        help_text='How the run was triggered: instant (file sense), scheduled (batch), adhoc (manual), swift (SWIFT message)',
     )
+    tags = models.ManyToManyField(FileTag, blank=True, related_name='file_logs')
     processed_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -237,3 +262,201 @@ class InboundFileLog(models.Model):
         return f'{self.original_filename} → {self.output_filename} ({self.get_status_display()})'
 
 
+class SwiftParameter(models.Model):
+    """
+    SWIFT message parameter definitions — covers MT, MX/pacs, BIC, TRAD fields.
+    Used as a master reference for parsing and validating SWIFT messages.
+    """
+
+    class Category(models.TextChoices):
+        MT = 'MT', 'MT (FIN)'
+        MX = 'MX', 'MX (ISO 20022)'
+        BIC = 'BIC', 'BIC Codes'
+        GENERAL = 'GENERAL', 'General'
+
+    class DataType(models.TextChoices):
+        TEXT = 'TEXT', 'Text'
+        AMOUNT = 'AMOUNT', 'Amount'
+        DATE = 'DATE', 'Date'
+        DATETIME = 'DATETIME', 'Date/Time'
+        BIC_TYPE = 'BIC', 'BIC Code'
+        ACCOUNT = 'ACCOUNT', 'Account Number'
+        CURRENCY = 'CURRENCY', 'Currency Code'
+        CODE = 'CODE', 'Code/Indicator'
+        NARRATIVE = 'NARRATIVE', 'Narrative/Free Text'
+        QUANTITY = 'QUANTITY', 'Quantity'
+        RATE = 'RATE', 'Rate/Price'
+        ISIN = 'ISIN', 'ISIN Code'
+        REFERENCE = 'REFERENCE', 'Reference'
+
+    class Status(models.TextChoices):
+        ACTIVE = 'active', 'Active'
+        INACTIVE = 'inactive', 'Inactive'
+
+    category = models.CharField(
+        max_length=10, choices=Category.choices, db_index=True,
+        help_text='Parameter category: MT, MX, BIC, TRAD, or GENERAL',
+    )
+    message_type = models.CharField(
+        max_length=30, db_index=True,
+        help_text='Message type, e.g. MT103, MT540, pacs.008, camt.053',
+    )
+    field_tag = models.CharField(
+        max_length=30,
+        help_text='SWIFT field tag, e.g. :20:, :32A:, :50K:, MsgId, BIC',
+    )
+    field_name = models.CharField(
+        max_length=255,
+        help_text='Human-readable name, e.g. Transaction Reference',
+    )
+    description = models.TextField(
+        blank=True, default='',
+        help_text='Detailed description of the field purpose and usage',
+    )
+    data_type = models.CharField(
+        max_length=12, choices=DataType.choices, default=DataType.TEXT,
+    )
+    is_mandatory = models.BooleanField(
+        default=False,
+        help_text='Whether this field is mandatory in the message',
+    )
+    max_length = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text='Maximum allowed characters',
+    )
+    format_pattern = models.CharField(
+        max_length=100, blank=True, default='',
+        help_text='Format notation, e.g. 16x, 6!n, 3!a15d, //YYYY-MM-DD',
+    )
+    sample_value = models.CharField(
+        max_length=255, blank=True, default='',
+        help_text='Example value for reference',
+    )
+    options_json = models.JSONField(
+        default=dict, blank=True,
+        help_text='Additional metadata: allowed_values, sub_fields, qualifiers, etc.',
+    )
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.ACTIVE, db_index=True,
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='swift_parameters',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['category', 'message_type', 'field_tag']
+        verbose_name = 'SWIFT Parameter'
+        verbose_name_plural = 'SWIFT Parameters'
+        unique_together = ['category', 'message_type', 'field_tag']
+
+    def __str__(self):
+        return f'{self.message_type} {self.field_tag} — {self.field_name}'
+
+
+class SwiftMessage(models.Model):
+    """
+    Stores a processed SWIFT FIN message with raw content, parsed JSON,
+    metadata, and reference to the generated Excel file.
+    """
+
+    class Status(models.TextChoices):
+        PROCESSED = 'processed', 'Processed'
+        FAILED = 'failed', 'Failed'
+
+    message_type = models.CharField(max_length=10, help_text='e.g. MT541')
+    message_type_description = models.CharField(max_length=200, blank=True, default='')
+    sender_bic = models.CharField(max_length=12, blank=True, default='')
+    receiver_bic = models.CharField(max_length=12, blank=True, default='')
+    reference = models.CharField(max_length=100, blank=True, default='')
+    raw_content = models.TextField(help_text='Full original message text')
+    parsed_json = models.JSONField(default=dict, blank=True, help_text='Structured parsed fields')
+    original_filename = models.CharField(max_length=255)
+    excel_filename = models.CharField(max_length=255, blank=True, default='')
+    source_file_content = models.BinaryField(null=True, blank=True, help_text='Raw file bytes')
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PROCESSED)
+    error_message = models.TextField(blank=True, default='')
+    processed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'SWIFT Message'
+        verbose_name_plural = 'SWIFT Messages'
+
+    def __str__(self):
+        return f'{self.message_type} — {self.reference} ({self.original_filename})'
+
+
+class SwiftPackage(models.Model):
+    """
+    SWIFT processing package — defines which message types to accept,
+    output format, and processing mode (instant/batch).
+    """
+
+    class OutputFormat(models.TextChoices):
+        XLSX = 'xlsx', 'Excel (XLSX)'
+        CSV = 'csv', 'CSV'
+        JSON = 'json', 'JSON'
+
+    class ProcessingMode(models.TextChoices):
+        INSTANT = 'instant', 'Instant (File Sense)'
+        BATCH = 'batch', 'Batch (Scheduled)'
+
+    class Status(models.TextChoices):
+        ACTIVE = 'active', 'Active'
+        INACTIVE = 'inactive', 'Inactive'
+
+    name = models.CharField(max_length=100, unique=True)
+    description = models.TextField(blank=True, default='')
+    message_types = models.JSONField(
+        default=list,
+        help_text='List of MT/MX types to process, e.g. ["MT103","pacs.008"] or ["ALL"]',
+    )
+    output_format = models.CharField(
+        max_length=5,
+        choices=OutputFormat.choices,
+        default=OutputFormat.XLSX,
+    )
+    processing_mode = models.CharField(
+        max_length=10,
+        choices=ProcessingMode.choices,
+        default=ProcessingMode.INSTANT,
+    )
+    file_pattern = models.CharField(
+        max_length=100, default='*.*',
+        help_text='Glob pattern for sft_inbound file matching, e.g. *.fin, *.xml',
+    )
+    status = models.CharField(
+        max_length=10,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+    )
+    batch_interval_minutes = models.IntegerField(
+        default=30,
+        help_text='Interval in minutes for batch processing (only used when processing_mode=batch)',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'SWIFT Package'
+        verbose_name_plural = 'SWIFT Packages'
+
+    def __str__(self):
+        types = self.message_types if isinstance(self.message_types, list) else []
+        label = ', '.join(types[:3]) if types else 'ALL'
+        if len(types) > 3:
+            label += f' +{len(types) - 3}'
+        return f'{self.name} ({label})'
+
+    def accepts_message_type(self, msg_type):
+        """Check if this package accepts the given message type."""
+        if not self.message_types or 'ALL' in self.message_types:
+            return True
+        return msg_type in self.message_types

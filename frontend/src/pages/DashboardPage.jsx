@@ -10,16 +10,20 @@ import {
     Stack,
 } from '@mui/material';
 import {
-    People as PeopleIcon,
-    CheckCircle as CheckCircleIcon,
+    Inventory2 as PackagesIcon,
+    PlayCircleOutline as ActiveIcon,
     Speed as SpeedIcon,
     Schedule as ScheduleIcon,
+    CheckCircle as SuccessIcon,
+    Error as FailIcon,
+    Inbox as InboxIcon,
+    DataUsage as RowsIcon,
 } from '@mui/icons-material';
 import { alpha } from '@mui/material/styles';
 import { palette } from '../theme/bloombergTheme';
 import api from '../services/api';
 
-function StatCard({ title, value, icon: Icon, color, loading }) {
+function StatCard({ title, value, subtitle, icon: Icon, color, loading }) {
     return (
         <Card
             sx={{
@@ -60,6 +64,14 @@ function StatCard({ title, value, icon: Icon, color, loading }) {
                                 {value}
                             </Typography>
                         )}
+                        {subtitle && !loading && (
+                            <Typography
+                                variant="caption"
+                                sx={{ color: 'text.secondary', mt: 0.5, display: 'block' }}
+                            >
+                                {subtitle}
+                            </Typography>
+                        )}
                     </Box>
                     <Box
                         sx={{
@@ -77,6 +89,59 @@ function StatCard({ title, value, icon: Icon, color, loading }) {
                 </Stack>
             </CardContent>
         </Card>
+    );
+}
+
+function ActivityRow({ item }) {
+    const isSuccess = item.status === 'success';
+    const statusColor = isSuccess ? palette.success : palette.error;
+
+    return (
+        <Box
+            sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1.5,
+                py: 1,
+                px: 1.5,
+                borderBottom: `1px solid ${palette.border}`,
+                '&:last-child': { borderBottom: 'none' },
+                '&:hover': { backgroundColor: alpha(palette.accentPrimary, 0.03) },
+            }}
+        >
+            <Box
+                sx={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    backgroundColor: statusColor,
+                    flexShrink: 0,
+                }}
+            />
+            <Box sx={{ flex: 1, overflow: 'hidden' }}>
+                <Typography
+                    variant="body2"
+                    sx={{
+                        fontWeight: 600,
+                        fontSize: '0.8rem',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                    }}
+                >
+                    {item.action}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                    {item.detail} · {item.package}
+                </Typography>
+            </Box>
+            <Typography
+                variant="caption"
+                sx={{ fontFamily: '"Roboto Mono", monospace', color: 'text.secondary', flexShrink: 0 }}
+            >
+                {item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : ''}
+            </Typography>
+        </Box>
     );
 }
 
@@ -98,33 +163,60 @@ export default function DashboardPage() {
         fetchDashboard();
     }, []);
 
+    const s = data?.stats || {};
+
+    const formatSize = (bytes) => {
+        if (!bytes) return '0 B';
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    };
+
     const stats = [
         {
-            title: 'Total Users',
-            value: data?.stats?.total_users ?? '-',
-            icon: PeopleIcon,
+            title: 'Total Packages',
+            value: s.total_packages ?? '-',
+            subtitle: `${s.active_packages ?? 0} active`,
+            icon: PackagesIcon,
             color: palette.accentPrimary,
         },
         {
-            title: 'Active Users',
-            value: data?.stats?.active_users ?? '-',
-            icon: CheckCircleIcon,
+            title: 'Successful Runs (7d)',
+            value: s.successful_runs_7d ?? '-',
+            subtitle: `of ${s.total_runs_7d ?? 0} total runs`,
+            icon: SuccessIcon,
             color: palette.success,
         },
         {
-            title: 'System Status',
-            value: data?.stats?.system_status === 'operational' ? 'OK' : 'ERR',
-            icon: SpeedIcon,
-            color: data?.stats?.system_status === 'operational' ? palette.success : palette.error,
+            title: 'Failed Runs (7d)',
+            value: s.failed_runs_7d ?? '-',
+            icon: FailIcon,
+            color: palette.error,
+        },
+        {
+            title: 'Rows Processed (7d)',
+            value: s.total_rows_processed_7d?.toLocaleString() ?? '-',
+            icon: RowsIcon,
+            color: palette.info,
+        },
+        {
+            title: 'Unprocessed Files',
+            value: s.unprocessed_files ?? '-',
+            subtitle: s.unprocessed_size ? formatSize(s.unprocessed_size) : undefined,
+            icon: InboxIcon,
+            color: s.unprocessed_files > 0 ? palette.warning : palette.textDisabled,
         },
         {
             title: 'Server Time',
-            value: data?.stats?.server_time
-                ? new Date(data.stats.server_time).toLocaleTimeString('en-US', {
+            value: s.server_time
+                ? new Date(s.server_time).toLocaleTimeString('en-US', {
                     hour: '2-digit',
                     minute: '2-digit',
                 })
                 : '-',
+            subtitle: s.server_time
+                ? new Date(s.server_time).toLocaleDateString()
+                : undefined,
             icon: ScheduleIcon,
             color: palette.info,
         },
@@ -164,31 +256,45 @@ export default function DashboardPage() {
             {/* Stats Grid */}
             <Grid container spacing={3} sx={{ mb: 4 }}>
                 {stats.map((stat) => (
-                    <Grid item xs={12} sm={6} md={3} key={stat.title}>
+                    <Grid item xs={12} sm={6} md={4} lg={2} key={stat.title}>
                         <StatCard {...stat} loading={loading} />
                     </Grid>
                 ))}
             </Grid>
 
-            {/* Activity Section Placeholder */}
+            {/* Activity Section */}
             <Card>
                 <CardContent sx={{ p: 3 }}>
                     <Typography variant="h6" sx={{ mb: 2 }}>
                         Recent Activity
                     </Typography>
-                    <Box
-                        sx={{
-                            textAlign: 'center',
-                            py: 6,
-                            color: 'text.secondary',
-                        }}
-                    >
-                        <SpeedIcon sx={{ fontSize: 48, mb: 1, opacity: 0.3 }} />
-                        <Typography variant="body2">No recent activity to display.</Typography>
-                        <Typography variant="caption" color="text.disabled">
-                            Activity will appear here as you use the platform.
-                        </Typography>
-                    </Box>
+                    {loading ? (
+                        <Box sx={{ py: 3 }}>
+                            {[1, 2, 3].map((i) => (
+                                <Skeleton key={i} height={40} sx={{ mb: 1 }} />
+                            ))}
+                        </Box>
+                    ) : data?.recent_activity?.length > 0 ? (
+                        <Box>
+                            {data.recent_activity.map((item) => (
+                                <ActivityRow key={item.id} item={item} />
+                            ))}
+                        </Box>
+                    ) : (
+                        <Box
+                            sx={{
+                                textAlign: 'center',
+                                py: 6,
+                                color: 'text.secondary',
+                            }}
+                        >
+                            <SpeedIcon sx={{ fontSize: 48, mb: 1, opacity: 0.3 }} />
+                            <Typography variant="body2">No recent activity to display.</Typography>
+                            <Typography variant="caption" color="text.disabled">
+                                Activity will appear here as you use the platform.
+                            </Typography>
+                        </Box>
+                    )}
                 </CardContent>
             </Card>
         </Box>

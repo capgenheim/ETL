@@ -1,6 +1,12 @@
 from django.contrib import admin
 from unfold.admin import ModelAdmin, TabularInline
-from .models import UploadedFile, Package, FieldMapping, InboundFileLog
+from .models import UploadedFile, Package, FieldMapping, InboundFileLog, FileTag
+
+
+@admin.register(FileTag)
+class FileTagAdmin(ModelAdmin):
+    list_display = ('name', 'color', 'auto_created', 'created_at')
+    search_fields = ('name',)
 
 
 @admin.register(UploadedFile)

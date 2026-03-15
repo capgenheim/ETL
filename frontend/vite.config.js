@@ -6,6 +6,9 @@ export default defineConfig({
     server: {
         host: '0.0.0.0',
         port: 3000,
+        hmr: {
+            clientPort: 80, // HMR WebSocket goes through nginx (port 3000 is internal-only)
+        },
         watch: {
             usePolling: true, // Required for Docker volume mounts
         },

@@ -29,6 +29,9 @@ import {
     ExpandMore,
     Logout as LogoutIcon,
     DataObject as DataObjectIcon,
+    FolderOpen as FolderOpenIcon,
+    Inbox as InboxIcon,
+    Language as SwiftIcon,
 } from '@mui/icons-material';
 import { alpha } from '@mui/material/styles';
 import { palette } from '../theme/bloombergTheme';
@@ -55,6 +58,25 @@ const navItems = [
             },
             { text: 'Create Package', icon: AddBoxIcon, path: '/transformation/create-package' },
             { text: 'Package List', icon: ListAltIcon, path: '/transformation/package-list' },
+        ],
+    },
+    {
+        text: 'SWIFT',
+        icon: SwiftIcon,
+        roles: ['user'],
+        children: [
+            { text: 'SWIFT Messages', icon: SwiftIcon, path: '/swift' },
+            { text: 'SWIFT Packages', icon: AddBoxIcon, path: '/swift/packages' },
+            { text: 'SWIFT Parameters', icon: ListAltIcon, path: '/swift/parameters' },
+        ],
+    },
+    {
+        text: 'File Manager',
+        icon: FolderOpenIcon,
+        roles: ['user'],
+        children: [
+            { text: 'Source Files', icon: FolderOpenIcon, path: '/transformation/file-manager' },
+            { text: 'Unprocessed Files', icon: InboxIcon, path: '/transformation/unprocessed-files' },
         ],
     },
     { text: 'Audit', icon: AuditIcon, path: '/audit', roles: ['user'] },

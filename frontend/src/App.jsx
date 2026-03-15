@@ -13,7 +13,13 @@ import CanvasListPage from './pages/transformation/CanvasListPage';
 import CreatePackagePage from './pages/transformation/CreatePackagePage';
 import PackageListPage from './pages/transformation/PackageListPage';
 import PackageMappingPage from './pages/transformation/PackageMappingPage';
+import FileManagerPage from './pages/transformation/FileManagerPage';
+import UnprocessedFilesPage from './pages/transformation/UnprocessedFilesPage';
 import AuditPage from './pages/AuditPage';
+import SwiftPage from './pages/SwiftPage';
+import SwiftParameterPage from './pages/SwiftParameterPage';
+import SwiftPackagePage from './pages/SwiftPackagePage';
+import ErrorPage from './pages/ErrorPage';
 
 function App() {
     return (
@@ -43,12 +49,21 @@ function App() {
                                 <Route path="/transformation/packages/:id/mapping" element={<PackageMappingPage />} />
                                 <Route path="/transformation/packages/:id/edit" element={<CreatePackagePage />} />
 
+                                {/* File Manager */}
+                                <Route path="/transformation/file-manager" element={<FileManagerPage />} />
+                                <Route path="/transformation/unprocessed-files" element={<UnprocessedFilesPage />} />
+
                                 {/* Audit Panel */}
                                 <Route path="/audit" element={<AuditPage />} />
+
+                                {/* SWIFT Panel */}
+                                <Route path="/swift" element={<SwiftPage />} />
+                                <Route path="/swift/parameters" element={<SwiftParameterPage />} />
+                                <Route path="/swift/packages" element={<SwiftPackagePage />} />
                             </Route>
 
-                            {/* Default redirect */}
-                            <Route path="*" element={<Navigate to="/login" replace />} />
+                            {/* 404 Catch-all */}
+                            <Route path="*" element={<ErrorPage errorCode={404} />} />
                         </Routes>
                     </BrowserRouter>
                 </AuthProvider>

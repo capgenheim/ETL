@@ -7,19 +7,42 @@ const api = axios.create({
     },
 });
 
-// Request interceptor — attach access token
+/* ─── Geolocation capture ─────────────────────────────────────── */
+let geoLat = null;
+let geoLng = null;
+
+// Prompt browser for geolocation on load (non-blocking)
+if ('geolocation' in navigator) {
+    navigator.geolocation.getCurrentPosition(
+        (pos) => {
+            geoLat = pos.coords.latitude.toFixed(7);
+            geoLng = pos.coords.longitude.toFixed(7);
+        },
+        () => {
+            // User denied or error — continue without geo
+        },
+        { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+    );
+}
+
+/* ─── Request interceptor — attach token + geolocation ────────── */
 api.interceptors.request.use(
     (config) => {
         const token = localStorage.getItem('access_token');
         if (token) {
             config.headers.Authorization = `Bearer ${token}`;
         }
+        // Attach geolocation headers if available
+        if (geoLat && geoLng) {
+            config.headers['X-Geo-Lat'] = geoLat;
+            config.headers['X-Geo-Lng'] = geoLng;
+        }
         return config;
     },
     (error) => Promise.reject(error)
 );
 
-// Response interceptor — handle 401 and attempt token refresh
+/* ─── Response interceptor — handle 401 + token refresh ──────── */
 let isRefreshing = false;
 let failedQueue = [];
 

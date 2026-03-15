@@ -46,9 +46,10 @@ Wait ~30 seconds for all services to initialise. The backend auto-runs:
 ┌─────────────────────────────────────────────────────────┐
 │                    Nginx (Port 80)                       │
 │        Reverse Proxy — routes /api/ and /admin/          │
+│        Turbo: gzip, keepalive, proxy buffers, caching   │
 ├────────────────────────┬────────────────────────────────┤
 │   React Frontend       │   Django Backend               │
-│   (Vite, Port 3000)    │   (API + Admin, Port 8000)     │
+│   (Vite, internal)     │   (API + Admin, Port 8000)     │
 ├────────────────────────┴────────────────────────────────┤
 │   PostgreSQL 16  │  Redis 7  │  Mailpit (Dev Email)     │
 │   (Port 5433)    │  (6379)   │  (SMTP 1025, UI 8025)    │
@@ -61,12 +62,14 @@ Wait ~30 seconds for all services to initialise. The backend auto-runs:
 |-----------|-------|---------------|---------------|
 | `etl-nginx` | nginx:alpine | 80 | **80** |
 | `etl-backend` | python:3.12-slim | 8000 | 8000 |
-| `etl-frontend` | node:20-alpine | 3000 | 3000 |
+| `etl-frontend` | node:20-alpine | 3000 | **— (internal only)** |
 | `etl-db` | postgres:16-alpine | 5432 | 5433 |
 | `etl-redis` | redis:7-alpine | 6379 | 6379 |
 | `etl-mailpit` | axllent/mailpit | 8025 / 1025 | 8025 / 1025 |
 | `etl-celery-worker` | python:3.12-slim | — | — |
 | `etl-celery-beat` | python:3.12-slim | — | — |
+
+> **Note**: The frontend (port 3000) is intentionally **not exposed** externally. All browser access goes through Nginx at port 80, which proxies to the frontend internally. This prevents the confusing `localhost:3000` URL and ensures all requests benefit from gzip, security headers, and proper API routing.
 
 ---
 
@@ -212,6 +215,20 @@ erDiagram
         datetime updated_at
     }
 
+    SwiftPackage {
+        bigint id PK
+        varchar name
+        text description
+        json message_types "List of MT/MX codes or ['ALL']"
+        varchar output_format "xlsx|csv|json"
+        varchar processing_mode "instant|batch"
+        int batch_interval_minutes
+        varchar file_pattern "Glob pattern e.g. *.fin, *.xml"
+        varchar status "active|inactive"
+        datetime created_at
+        datetime updated_at
+    }
+
     FieldMapping {
         bigint id PK
         bigint package_id FK
@@ -256,6 +273,7 @@ erDiagram
     Package }o--|| UploadedFile : "source_file"
     Package }o--|| UploadedFile : "canvas_file"
     InboundFileLog }o--o{ FileTag : "tagged with"
+    SwiftPackage ||--o{ InboundFileLog : "processes"
 ```
 
 ---
@@ -266,10 +284,15 @@ erDiagram
 - Stat cards: Active Packages, Runs (7d), Rows Processed, Server Time, **Unprocessed Files**
 - Recent Activity feed (last 20 events) · Processing Summary panel
 
-### 📦 Package Manager
+### 📦 Transformation Packages
 - CRUD for transformation packages · File pattern matching (glob: `MBB*.csv`)
 - Status lifecycle: Draft → Active → Paused → Stopped
 - Run logs viewer and ad-hoc run trigger (🚀)
+
+### 📨 SWIFT Packages
+- Configure robust filtering rules based on MT/MX message codes
+- Control parsing output options (`csv`, `xlsx`, `json`)
+- Instant vs Schedule (Batch) file sense processing
 
 ### 🗺️ Package Mapping
 - Visual field mapping grid · **Mandatory field validation** (★ must be mapped)
@@ -308,12 +331,13 @@ All ports are configurable via `.env`. Edit and restart:
 ```bash
 # .env
 BACKEND_PORT=8000          # Django API
-FRONTEND_PORT=3000         # React dev server
 DB_EXTERNAL_PORT=5433      # PostgreSQL (external access)
 REDIS_PORT=6379            # Redis
 MAILPIT_UI_PORT=8025       # Mailpit web UI
 MAIL_PORT=1025             # Mailpit SMTP
 ```
+
+> **Note**: The frontend (Vite) runs internally on port 3000 but is **not exposed** to the host. Access the app only through Nginx at port 80.
 
 ### Changing the Main Access Port (Nginx)
 
@@ -503,12 +527,20 @@ Shared across: `etl-backend`, `etl-celery-worker`, `etl-celery-beat`.
 
 The `file_sense_scan` task is **automatically registered** on startup (every 30 seconds).
 
+**A. Transformation Flow**
 1. Place a file in `./trfm_inbound/` matching a package's file pattern (e.g. `MBB*.csv`)
-2. Celery Beat's `file_sense_scan` task detects and matches it to an active package
-3. Celery Worker processes the file (applies field mappings: direct, conditional, constant)
-4. Output written to `./trfm_outbound/`
-5. Inbound file saved to PostgreSQL, then deleted from disk
-6. Run log recorded with status (success/failed) and run type (instant/scheduled/adhoc)
+2. Celery Beat identifies and matches it to an active Transformation Package
+3. Celery Worker applies field mappings (direct, conditional, constant)
+4. Output is written to `./trfm_outbound/`
+5. Inbound file saved to PostgreSQL, deleted from disk
+6. Run log recorded with status (`success`/`failed`)
+
+**B. SWIFT Message Flow**
+1. Place a `.fin`, `.txt`, or `.xml` file in `./sft_inbound/`
+2. Celery Beat delegates to the MX/MT parser
+3. Configured `SwiftPackage` rules are applied (`message_types`, `batch_interval_minutes`)
+4. Unpacked messages are enriched into the DB and exported to requested `output_format`
+5. Daily grouped logs available inside File Manager under Source files
 
 ### Run Logs & Ad-hoc Run
 
@@ -594,7 +626,8 @@ ETL/
 | Issue | Quick Solution |
 |-------|---------------|
 | **502 Bad Gateway** | See detailed fix below ⬇️ |
-| **Login shows "unexpected error"** | See detailed fix below ⬇️ |
+| **Login shows "unexpected error"** | Hard refresh: **Ctrl+Shift+R** (clears cached Vite client). If persists, see OAuth2 fix below ⬇️ |
+| **WebSocket errors in console** | Normal after rebuild — hard refresh (**Ctrl+Shift+R**) clears old Vite HMR connection |
 | **Database connection refused** | Wait for healthcheck: `docker compose ps` (check db is healthy) |
 | **Frontend not loading** | Check logs: `docker compose logs frontend` |
 | **Celery tasks not running** | `docker restart etl-celery-beat etl-celery-worker` |

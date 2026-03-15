@@ -47,6 +47,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'apps.dashboard.middleware.AuditMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -248,6 +249,17 @@ UNFOLD = {
                 ],
             },
             {
+                "title": "Audit & Security",
+                "icon": "shield",
+                "items": [
+                    {
+                        "title": "Audit Logs",
+                        "icon": "history",
+                        "link": "/admin/dashboard/auditlog/",
+                    },
+                ],
+            },
+            {
                 "title": "Documentation",
                 "icon": "menu_book",
                 "items": [
@@ -285,3 +297,6 @@ CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 # ===== File Processing Paths =====
 TRFM_INBOUND_DIR = os.environ.get('TRFM_INBOUND_DIR', '/data/trfm_inbound')
 TRFM_OUTBOUND_DIR = os.environ.get('TRFM_OUTBOUND_DIR', '/data/trfm_outbound')
+SFT_INBOUND_DIR = os.environ.get('SFT_INBOUND_DIR', '/data/sft_inbound')
+SFT_OUTBOUND_DIR = os.environ.get('SFT_OUTBOUND_DIR', '/data/sft_outbound')
+

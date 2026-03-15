@@ -67,6 +67,7 @@ function ConditionDialog({ open, onClose, onSave, sourceHeaders, initial }) {
     const [elseMode, setElseMode] = useState(initial?.else_source ? 'field' : 'value');
     const [elseSource, setElseSource] = useState(initial?.else_source || '');
     const [elseValue, setElseValue] = useState(initial?.else_value || '');
+    const [fixedValue, setFixedValue] = useState(initial?.then_value || '');
 
     useEffect(() => {
         if (open && initial) {
@@ -80,12 +81,28 @@ function ConditionDialog({ open, onClose, onSave, sourceHeaders, initial }) {
             setElseMode(initial.else_source ? 'field' : 'value');
             setElseSource(initial.else_source || '');
             setElseValue(initial.else_value || '');
+            setFixedValue(initial.condition_type === 'fixed_value' ? (initial.then_value || '') : '');
         }
     }, [open, initial]);
 
     const noCompareNeeded = operator === 'not_empty' || operator === 'is_empty';
 
     const handleSave = () => {
+        if (conditionType === 'fixed_value') {
+            const cond = {
+                condition_type: 'fixed_value',
+                source_field: '',
+                operator: '',
+                compare_value: '',
+                then_source: '',
+                then_value: fixedValue,
+                else_source: '',
+                else_value: '',
+            };
+            onSave(cond);
+            onClose();
+            return;
+        }
         const cond = {
             condition_type: conditionType,
             source_field: sourceField,
@@ -179,10 +196,38 @@ function ConditionDialog({ open, onClose, onSave, sourceHeaders, initial }) {
                     >
                         <ToggleButton value="if_else">IF / ELSE</ToggleButton>
                         <ToggleButton value="if_only">IF Only</ToggleButton>
+                        <ToggleButton value="fixed_value">Fixed Value</ToggleButton>
                     </ToggleButtonGroup>
                 </Box>
 
+                {/* Fixed Value Input */}
+                {conditionType === 'fixed_value' && (
+                    <Box sx={sectionSx}>
+                        <Typography sx={labelSx}>📌 Fixed Value</Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ mb: 1.5, display: 'block' }}>
+                            This canvas field will always output the fixed value below, regardless of any source data.
+                        </Typography>
+                        <TextField
+                            size="small"
+                            label="Fixed Value"
+                            value={fixedValue}
+                            onChange={(e) => setFixedValue(e.target.value)}
+                            fullWidth
+                            placeholder="Enter the fixed value to output..."
+                            InputProps={{
+                                startAdornment: (
+                                    <ConstantIcon sx={{ fontSize: 16, color: '#dcdcaa', mr: 0.5 }} />
+                                ),
+                            }}
+                            sx={{
+                                '& input': { fontFamily: '"JetBrains Mono", monospace', fontSize: '0.85rem' },
+                            }}
+                        />
+                    </Box>
+                )}
+
                 {/* IF Condition */}
+                {conditionType !== 'fixed_value' && (
                 <Box sx={sectionSx}>
                     <Typography sx={labelSx}>⚡ IF Condition</Typography>
                     <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -239,8 +284,10 @@ function ConditionDialog({ open, onClose, onSave, sourceHeaders, initial }) {
                         )}
                     </Box>
                 </Box>
+                )}
 
                 {/* THEN Branch */}
+                {conditionType !== 'fixed_value' && (
                 <Box sx={sectionSx}>
                     <Typography sx={labelSx}>✅ THEN (condition met)</Typography>
                     <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
@@ -301,6 +348,7 @@ function ConditionDialog({ open, onClose, onSave, sourceHeaders, initial }) {
                         )}
                     </Box>
                 </Box>
+                )}
 
                 {/* ELSE Branch */}
                 {conditionType === 'if_else' && (
@@ -385,30 +433,41 @@ function ConditionDialog({ open, onClose, onSave, sourceHeaders, initial }) {
                             lineHeight: 1.8,
                         }}
                     >
-                        <Box component="span" sx={{ color: '#c586c0' }}>IF </Box>
-                        <Box component="span" sx={{ color: '#9cdcfe' }}>{sourceField || '<?>'}</Box>
-                        {' '}
-                        <Box component="span" sx={{ color: palette.accentPrimary }}>{operator}</Box>
-                        {!noCompareNeeded && (
+                        {conditionType === 'fixed_value' ? (
                             <>
-                                {' '}
-                                <Box component="span" sx={{ color: '#ce9178' }}>
-                                    {compareValue ? `"${compareValue}"` : '"<?>"'}
+                                <Box component="span" sx={{ color: '#c586c0' }}>FIXED → </Box>
+                                <Box component="span" sx={{ color: '#dcdcaa' }}>
+                                    {fixedValue ? `"${fixedValue}"` : '"<?>"'}
                                 </Box>
                             </>
-                        )}
-                        <br />
-                        <Box component="span" sx={{ color: '#c586c0' }}>  THEN → </Box>
-                        <Box component="span" sx={{ color: '#4ec9b0' }}>
-                            {thenMode === 'field' ? (thenSource || '<?>') : `"${thenValue}"`}
-                        </Box>
-                        {conditionType === 'if_else' && (
+                        ) : (
                             <>
+                                <Box component="span" sx={{ color: '#c586c0' }}>IF </Box>
+                                <Box component="span" sx={{ color: '#9cdcfe' }}>{sourceField || '<?>'}</Box>
+                                {' '}
+                                <Box component="span" sx={{ color: palette.accentPrimary }}>{operator}</Box>
+                                {!noCompareNeeded && (
+                                    <>
+                                        {' '}
+                                        <Box component="span" sx={{ color: '#ce9178' }}>
+                                            {compareValue ? `"${compareValue}"` : '"<?>"'}
+                                        </Box>
+                                    </>
+                                )}
                                 <br />
-                                <Box component="span" sx={{ color: '#c586c0' }}>  ELSE → </Box>
-                                <Box component="span" sx={{ color: '#dcdcaa' }}>
-                                    {elseMode === 'field' ? (elseSource || '<?>') : `"${elseValue}"`}
+                                <Box component="span" sx={{ color: '#c586c0' }}>  THEN → </Box>
+                                <Box component="span" sx={{ color: '#4ec9b0' }}>
+                                    {thenMode === 'field' ? (thenSource || '<?>') : `"${thenValue}"`}
                                 </Box>
+                                {conditionType === 'if_else' && (
+                                    <>
+                                        <br />
+                                        <Box component="span" sx={{ color: '#c586c0' }}>  ELSE → </Box>
+                                        <Box component="span" sx={{ color: '#dcdcaa' }}>
+                                            {elseMode === 'field' ? (elseSource || '<?>') : `"${elseValue}"`}
+                                        </Box>
+                                    </>
+                                )}
                             </>
                         )}
                     </Typography>
@@ -425,7 +484,7 @@ function ConditionDialog({ open, onClose, onSave, sourceHeaders, initial }) {
                 <Button
                     variant="contained"
                     onClick={handleSave}
-                    disabled={!sourceField}
+                    disabled={conditionType === 'fixed_value' ? !fixedValue : !sourceField}
                     sx={{
                         textTransform: 'none',
                         fontWeight: 600,
