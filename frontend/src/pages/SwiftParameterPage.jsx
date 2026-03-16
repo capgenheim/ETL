@@ -228,9 +228,14 @@ export default function SwiftParameterPage() {
             }}>
                 {/* Header */}
                 <Box sx={{
-                    display: 'grid', gridTemplateColumns: gridCols, px: 1.5, py: 1,
-                    borderBottom: `2px solid ${alpha(palette.accentPrimary, 0.3)}`,
+                    display: 'grid', gridTemplateColumns: gridCols, px: 0, py: 0,
+                    borderBottom: `2px solid ${palette.accentPrimary}`,
                     backgroundColor: alpha(palette.bgSecondary, 0.3),
+                    '& > *': {
+                        px: 1, py: 1,
+                        borderRight: `1px solid ${alpha(palette.border, 0.5)}`,
+                        '&:last-child': { borderRight: 'none' },
+                    },
                 }}>
                     <Typography sx={{ ...headerCellSx, textAlign: 'center' }}>#</Typography>
                     <Typography sx={headerCellSx}>Cat</Typography>
@@ -256,10 +261,16 @@ export default function SwiftParameterPage() {
                         <Box sx={{ maxHeight: 'calc(100vh - 360px)', overflowY: 'auto' }}>
                             {paginated.map((p, idx) => (
                                 <Box key={p.id} sx={{
-                                    display: 'grid', gridTemplateColumns: gridCols, px: 1.5,
-                                    borderBottom: `1px solid ${alpha(palette.border, 0.3)}`,
-                                    '&:hover': { backgroundColor: alpha(palette.accentPrimary, 0.03) },
+                                    display: 'grid', gridTemplateColumns: gridCols, px: 0,
+                                    borderBottom: `1px solid ${palette.border}`,
+                                    '&:hover': { backgroundColor: alpha(palette.accentPrimary, 0.04) },
                                     alignItems: 'center',
+                                    '& > *': {
+                                        px: 1, py: 0.6,
+                                        borderRight: `1px solid ${alpha(palette.border, 0.5)}`,
+                                        '&:last-child': { borderRight: 'none' },
+                                        overflow: 'hidden',
+                                    },
                                 }}>
                                     <Typography sx={{ fontSize: '0.65rem', textAlign: 'center', color: 'text.disabled', py: 0.6 }}>
                                         {page * ROWS_PER_PAGE + idx + 1}

@@ -1,11 +1,13 @@
 """
-SWIFT Package API views — CRUD for SwiftPackage configuration.
+SWIFT Package API views — CRUD + status control + run logs for SwiftPackage.
 """
+from datetime import timedelta
+
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import SwiftPackage
+from .models import SwiftPackage, SwiftRunLog
 
 
 # All known MT and MX types for the selector
@@ -48,6 +50,23 @@ KNOWN_MESSAGE_TYPES = {
 }
 
 
+def _run_log_summary(pkg):
+    """Compute run log summary for a SwiftPackage."""
+    logs = SwiftRunLog.objects.filter(swift_package=pkg)
+    total = logs.count()
+    success = logs.filter(status='success').count()
+    failed = logs.filter(status='failed').count()
+    last_run = logs.first()
+    return {
+        'total': total,
+        'success': success,
+        'failed': failed,
+        'last_run': last_run.processed_at.isoformat() if last_run else None,
+        'last_status': last_run.status if last_run else None,
+        'last_run_type': last_run.run_type if last_run else None,
+    }
+
+
 def _serialize_package(pkg):
     return {
         'id': pkg.id,
@@ -59,6 +78,7 @@ def _serialize_package(pkg):
         'batch_interval_minutes': pkg.batch_interval_minutes,
         'file_pattern': pkg.file_pattern,
         'status': pkg.status,
+        'run_log_summary': _run_log_summary(pkg),
         'created_at': pkg.created_at.isoformat(),
         'updated_at': pkg.updated_at.isoformat(),
     }
@@ -162,3 +182,67 @@ class SwiftPackageTypesView(APIView):
 
     def get(self, request):
         return Response(KNOWN_MESSAGE_TYPES)
+
+
+class SwiftPackageStatusView(APIView):
+    """POST: Change SWIFT package status (start/pause/stop)."""
+
+    VALID_ACTIONS = {
+        'start': SwiftPackage.Status.ACTIVE,
+        'pause': SwiftPackage.Status.PAUSED,
+        'stop': SwiftPackage.Status.INACTIVE,
+    }
+
+    def post(self, request, pk, action):
+        if action not in self.VALID_ACTIONS:
+            return Response(
+                {'error': f'Invalid action: {action}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            pkg = SwiftPackage.objects.get(pk=pk)
+        except SwiftPackage.DoesNotExist:
+            return Response(
+                {'error': 'Package not found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        pkg.status = self.VALID_ACTIONS[action]
+        pkg.save(update_fields=['status', 'updated_at'])
+        return Response(_serialize_package(pkg))
+
+
+class SwiftRunLogListView(APIView):
+    """GET: Recent run logs for a SWIFT package (last 7 days, max 50)."""
+
+    def get(self, request, pk):
+        from django.utils import timezone
+
+        try:
+            pkg = SwiftPackage.objects.get(pk=pk)
+        except SwiftPackage.DoesNotExist:
+            return Response({'error': 'Package not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        cutoff = timezone.now() - timedelta(days=7)
+        logs = SwiftRunLog.objects.filter(
+            swift_package=pkg,
+            processed_at__gte=cutoff,
+        ).order_by('-processed_at')[:50]
+
+        data = [
+            {
+                'id': log.id,
+                'original_filename': log.original_filename,
+                'output_filename': log.output_filename,
+                'message_type': log.message_type,
+                'reference': log.reference,
+                'messages_processed': log.messages_processed,
+                'status': log.status,
+                'run_type': log.run_type,
+                'error_message': log.error_message,
+                'processed_at': log.processed_at.isoformat(),
+            }
+            for log in logs
+        ]
+        return Response(data)

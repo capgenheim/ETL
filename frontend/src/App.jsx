@@ -33,6 +33,9 @@ function App() {
                 <AuthProvider>
                     <BrowserRouter>
                         <Routes>
+                            {/* Root redirect */}
+                            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
                             {/* Public Routes */}
                             <Route path="/login" element={<LoginPage />} />
 

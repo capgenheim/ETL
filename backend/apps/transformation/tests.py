@@ -567,3 +567,180 @@ class TestFieldMappingAPI(TestCase):
     def test_mapping_not_found_package(self):
         resp = self.client.get('/api/transformation/packages/99999/mappings/')
         self.assertEqual(resp.status_code, 404)
+
+
+# ─── SWIFT Package Tests ──────────────────────────────────────────────
+
+class TestSwiftPackageAPI(TestCase):
+    """Tests for SWIFT Package CRUD, status control, and run logs."""
+
+    def setUp(self):
+        from oauth2_provider.models import Application, AccessToken
+        from django.utils import timezone
+        import datetime
+
+        self.user = User.objects.create_user(
+            username='swiftuser', email='swiftuser@etl.local',
+            password='Test@12345', first_name='Swift', last_name='Tester',
+        )
+        self.app = Application.objects.create(
+            name='test-app-swift', client_type=Application.CLIENT_CONFIDENTIAL,
+            authorization_grant_type=Application.GRANT_PASSWORD, user=self.user,
+        )
+        self.token = AccessToken.objects.create(
+            user=self.user, application=self.app,
+            token='test-token-swift-001',
+            expires=timezone.now() + datetime.timedelta(hours=1),
+            scope='read write',
+        )
+        self.client = APIClient()
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.token.token}')
+
+    def _create_package(self, **overrides):
+        data = {
+            'name': 'SWIFT Test Package',
+            'description': 'Unit test package',
+            'message_types': ['MT103', 'MT540'],
+            'output_format': 'xlsx',
+            'processing_mode': 'instant',
+            'file_pattern': '*.fin',
+            'status': 'active',
+        }
+        data.update(overrides)
+        return self.client.post('/api/transformation/swift-packages/', data, format='json')
+
+    # ── Create ──
+
+    def test_create_swift_package(self):
+        resp = self._create_package()
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['name'], 'SWIFT Test Package')
+        self.assertEqual(resp.data['message_types'], ['MT103', 'MT540'])
+        self.assertEqual(resp.data['status'], 'active')
+        self.assertIn('run_log_summary', resp.data)
+
+    def test_create_duplicate_name(self):
+        self._create_package()
+        resp = self._create_package()
+        self.assertEqual(resp.status_code, 400)
+
+    # ── List ──
+
+    def test_list_swift_packages(self):
+        self._create_package(name='Pkg A')
+        self._create_package(name='Pkg B')
+        resp = self.client.get('/api/transformation/swift-packages/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 2)
+
+    # ── Detail ──
+
+    def test_get_swift_package_detail(self):
+        create_resp = self._create_package()
+        pkg_id = create_resp.data['id']
+        resp = self.client.get(f'/api/transformation/swift-packages/{pkg_id}/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['name'], 'SWIFT Test Package')
+
+    # ── Update ──
+
+    def test_update_swift_package(self):
+        create_resp = self._create_package()
+        pkg_id = create_resp.data['id']
+        resp = self.client.put(
+            f'/api/transformation/swift-packages/{pkg_id}/',
+            {'name': 'Updated SWIFT Pkg', 'description': 'Changed'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['name'], 'Updated SWIFT Pkg')
+
+    # ── Delete ──
+
+    def test_delete_swift_package(self):
+        create_resp = self._create_package()
+        pkg_id = create_resp.data['id']
+        resp = self.client.delete(f'/api/transformation/swift-packages/{pkg_id}/')
+        self.assertEqual(resp.status_code, 200)
+
+    # ── Status Control ──
+
+    def test_start_swift_package(self):
+        create_resp = self._create_package(status='inactive')
+        pkg_id = create_resp.data['id']
+        resp = self.client.post(f'/api/transformation/swift-packages/{pkg_id}/start/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['status'], 'active')
+
+    def test_pause_swift_package(self):
+        create_resp = self._create_package()
+        pkg_id = create_resp.data['id']
+        resp = self.client.post(f'/api/transformation/swift-packages/{pkg_id}/pause/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['status'], 'paused')
+
+    def test_stop_swift_package(self):
+        create_resp = self._create_package()
+        pkg_id = create_resp.data['id']
+        resp = self.client.post(f'/api/transformation/swift-packages/{pkg_id}/stop/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['status'], 'inactive')
+
+    def test_invalid_swift_action(self):
+        create_resp = self._create_package()
+        pkg_id = create_resp.data['id']
+        resp = self.client.post(f'/api/transformation/swift-packages/{pkg_id}/restart/')
+        self.assertEqual(resp.status_code, 400)
+
+    # ── Run Logs ──
+
+    def test_swift_run_logs_empty(self):
+        create_resp = self._create_package()
+        pkg_id = create_resp.data['id']
+        resp = self.client.get(f'/api/transformation/swift-packages/{pkg_id}/run-logs/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 0)
+
+    def test_swift_run_logs_with_entries(self):
+        from apps.transformation.models import SwiftPackage, SwiftRunLog
+        create_resp = self._create_package()
+        pkg_id = create_resp.data['id']
+        pkg = SwiftPackage.objects.get(pk=pkg_id)
+
+        # Seed run logs
+        SwiftRunLog.objects.create(
+            swift_package=pkg, original_filename='test.fin',
+            message_type='MT103', status='success', messages_processed=3,
+        )
+        SwiftRunLog.objects.create(
+            swift_package=pkg, original_filename='bad.fin',
+            message_type='MT540', status='failed', error_message='Parse error',
+        )
+
+        resp = self.client.get(f'/api/transformation/swift-packages/{pkg_id}/run-logs/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 2)
+
+    def test_swift_run_log_summary_in_list(self):
+        from apps.transformation.models import SwiftPackage, SwiftRunLog
+        create_resp = self._create_package()
+        pkg_id = create_resp.data['id']
+        pkg = SwiftPackage.objects.get(pk=pkg_id)
+
+        SwiftRunLog.objects.create(
+            swift_package=pkg, original_filename='a.fin',
+            message_type='MT103', status='success', messages_processed=5,
+        )
+        SwiftRunLog.objects.create(
+            swift_package=pkg, original_filename='b.fin',
+            message_type='MT540', status='failed',
+        )
+
+        resp = self.client.get('/api/transformation/swift-packages/')
+        self.assertEqual(resp.status_code, 200)
+        summary = resp.data[0]['run_log_summary']
+        self.assertEqual(summary['total'], 2)
+        self.assertEqual(summary['success'], 1)
+        self.assertEqual(summary['failed'], 1)
+        self.assertIsNotNone(summary['last_run'])
+

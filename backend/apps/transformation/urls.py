@@ -52,5 +52,7 @@ urlpatterns = [
     # ── SWIFT Packages ──
     path('swift-packages/', swift_pkg_views.SwiftPackageListView.as_view(), name='swift-pkg-list'),
     path('swift-packages/types/', swift_pkg_views.SwiftPackageTypesView.as_view(), name='swift-pkg-types'),
+    path('swift-packages/<int:pk>/run-logs/', swift_pkg_views.SwiftRunLogListView.as_view(), name='swift-pkg-run-logs'),
     path('swift-packages/<int:pk>/', swift_pkg_views.SwiftPackageDetailView.as_view(), name='swift-pkg-detail'),
+    path('swift-packages/<int:pk>/<str:action>/', swift_pkg_views.SwiftPackageStatusView.as_view(), name='swift-pkg-status'),
 ]

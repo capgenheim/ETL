@@ -208,7 +208,7 @@ function RunLogsDialog({ open, onClose, packageName, packageId }) {
         if (open && packageId) {
             api.get(`/transformation/packages/${packageId}/run-logs/`)
                 .then((res) => setLogs(res.data))
-                .catch(() => {});
+                .catch(() => { });
         }
     }, [open, packageId]);
 
@@ -253,7 +253,7 @@ function RunLogsDialog({ open, onClose, packageName, packageId }) {
                             const now = new Date();
                             const from = new Date(now);
                             from.setDate(from.getDate() - 7);
-                            const fmt = (d) => `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+                            const fmt = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
                             return `${fmt(from)} → ${fmt(now)} (7 days) • ${logs.length} record${logs.length !== 1 ? 's' : ''}`;
                         })()}
                     </Typography>
@@ -804,7 +804,14 @@ export default function PackageListPage() {
                             pkg={pkg}
                             index={page * ROWS_PER_PAGE + idx + 1}
                             onAction={handleAction}
-                            onEdit={(id) => navigate(`/transformation/packages/${id}/edit`)}
+                            onEdit={(id) => {
+                                const pkg = packages.find(p => p.id === id);
+                                if (pkg && (pkg.status === 'active' || pkg.status === 'running')) {
+                                    setSnackbar({ open: true, message: 'Stop the package before editing', severity: 'warning' });
+                                    return;
+                                }
+                                navigate(`/transformation/packages/${id}/edit`);
+                            }}
                             onMap={(id) => navigate(`/transformation/packages/${id}/mapping`)}
                             onAdhocRun={handleAdhocRun}
                             onOpenLogs={handleOpenLogs}

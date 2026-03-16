@@ -10,6 +10,8 @@ import {
     Refresh as RefreshIcon, Save as SaveIcon, Close as CloseIcon,
     CheckCircle as ActiveIcon, Cancel as InactiveIcon,
     BoltOutlined as InstantIcon, Schedule as ScheduleIcon,
+    PlayArrow as PlayIcon, Pause as PauseIcon, Stop as StopIcon,
+    Assessment as LogIcon,
 } from '@mui/icons-material';
 import { alpha } from '@mui/material/styles';
 import { palette } from '../theme/bloombergTheme';
@@ -39,6 +41,180 @@ const headerCellSx = {
     textTransform: 'uppercase',
 };
 
+/* ─── RunLogBadge — shows total/success/failed as a compact badge ─── */
+function RunLogBadge({ summary, onClick }) {
+    if (!summary || summary.total === 0) {
+        return (
+            <Tooltip title="No runs yet">
+                <Box onClick={onClick} sx={{
+                    display: 'flex', alignItems: 'center', gap: 0.5, cursor: 'pointer',
+                    opacity: 0.4, '&:hover': { opacity: 0.7 },
+                }}>
+                    <LogIcon sx={{ fontSize: 14, color: 'text.disabled' }} />
+                    <Typography sx={{ fontSize: '0.55rem', color: 'text.disabled' }}>0</Typography>
+                </Box>
+            </Tooltip>
+        );
+    }
+
+    return (
+        <Tooltip title={`${summary.total} total · ${summary.success} success · ${summary.failed} failed`}>
+            <Box onClick={onClick} sx={{
+                display: 'flex', alignItems: 'center', gap: 0.5, cursor: 'pointer',
+                '&:hover': { opacity: 0.8 },
+            }}>
+                <Box sx={{
+                    position: 'relative', width: 26, height: 26,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                    <svg width="26" height="26" viewBox="0 0 26 26">
+                        <circle cx="13" cy="13" r="10" fill="none"
+                            stroke={alpha(palette.border, 0.3)} strokeWidth="3" />
+                        {summary.total > 0 && (
+                            <circle cx="13" cy="13" r="10" fill="none"
+                                stroke="#4CAF50" strokeWidth="3"
+                                strokeDasharray={`${(summary.success / summary.total) * 62.8} 62.8`}
+                                strokeDashoffset="0"
+                                transform="rotate(-90 13 13)" />
+                        )}
+                        {summary.failed > 0 && (
+                            <circle cx="13" cy="13" r="10" fill="none"
+                                stroke="#f44336" strokeWidth="3"
+                                strokeDasharray={`${(summary.failed / summary.total) * 62.8} 62.8`}
+                                strokeDashoffset={`${-(summary.success / summary.total) * 62.8}`}
+                                transform="rotate(-90 13 13)" />
+                        )}
+                    </svg>
+                    <Typography sx={{
+                        position: 'absolute', fontSize: '0.5rem', fontWeight: 700,
+                        color: palette.textPrimary,
+                        fontFamily: '"JetBrains Mono", monospace',
+                    }}>
+                        {summary.total}
+                    </Typography>
+                </Box>
+            </Box>
+        </Tooltip>
+    );
+}
+
+/* ─── RunLogsDialog — scrollable list of recent runs ─── */
+function RunLogsDialog({ open, onClose, pkg }) {
+    const [logs, setLogs] = useState([]);
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        if (!open || !pkg) return;
+        setLoading(true);
+        api.get(`/transformation/swift-packages/${pkg.id}/run-logs/`)
+            .then(res => setLogs(res.data))
+            .catch(() => setLogs([]))
+            .finally(() => setLoading(false));
+    }, [open, pkg]);
+
+    return (
+        <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth
+            PaperProps={{
+                sx: {
+                    backgroundColor: palette.bgSecondary,
+                    border: `1px solid ${alpha(palette.accentPrimary, 0.2)}`,
+                },
+            }}>
+            <DialogTitle sx={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                borderBottom: `1px solid ${alpha(palette.border, 0.3)}`,
+            }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <LogIcon sx={{ fontSize: 20, color: palette.accentPrimary }} />
+                    <Typography sx={{ fontWeight: 700, fontSize: '0.95rem' }}>
+                        Run Logs — {pkg?.name}
+                    </Typography>
+                </Box>
+                <IconButton size="small" onClick={onClose}
+                    sx={{ color: 'text.secondary', '&:hover': { color: palette.error } }}>
+                    <CloseIcon sx={{ fontSize: 18 }} />
+                </IconButton>
+            </DialogTitle>
+            <DialogContent sx={{ p: 0 }}>
+                {loading ? (
+                    <Box sx={{ textAlign: 'center', py: 4 }}><CircularProgress size={24} /></Box>
+                ) : logs.length === 0 ? (
+                    <Box sx={{ textAlign: 'center', py: 4 }}>
+                        <Typography color="text.disabled">No run logs in the last 7 days</Typography>
+                    </Box>
+                ) : (
+                    <Box>
+                        {/* Log header */}
+                        <Box sx={{
+                            display: 'grid',
+                            gridTemplateColumns: '1.2fr 0.6fr 0.5fr 0.4fr 0.5fr 1fr',
+                            px: 2, py: 0.8,
+                            borderBottom: `2px solid ${palette.accentPrimary}`,
+                            backgroundColor: alpha(palette.bgSecondary, 0.5),
+                            '& > *': {
+                                borderRight: `1px solid ${alpha(palette.border, 0.5)}`,
+                                px: 1,
+                                '&:last-child': { borderRight: 'none' },
+                            },
+                        }}>
+                            {['Filename', 'Type', 'Status', 'Msgs', 'Run Type', 'Processed'].map(h => (
+                                <Typography key={h} sx={{
+                                    ...headerCellSx, fontSize: '0.55rem',
+                                }}>{h}</Typography>
+                            ))}
+                        </Box>
+                        {/* Log rows */}
+                        <Box sx={{ maxHeight: 400, overflowY: 'auto' }}>
+                            {logs.map(log => (
+                                <Box key={log.id} sx={{
+                                    display: 'grid',
+                                    gridTemplateColumns: '1.2fr 0.6fr 0.5fr 0.4fr 0.5fr 1fr',
+                                    px: 2, py: 0.6,
+                                    borderBottom: `1px solid ${alpha(palette.border, 0.3)}`,
+                                    '&:hover': { backgroundColor: alpha(palette.accentPrimary, 0.03) },
+                                    alignItems: 'center',
+                                    '& > *': {
+                                        borderRight: `1px solid ${alpha(palette.border, 0.3)}`,
+                                        px: 1,
+                                        '&:last-child': { borderRight: 'none' },
+                                    },
+                                }}>
+                                    <Typography sx={{ fontSize: '0.65rem', color: palette.textPrimary, fontFamily: '"JetBrains Mono", monospace' }}>
+                                        {log.original_filename}
+                                    </Typography>
+                                    <Chip label={log.message_type || '—'} size="small" sx={{
+                                        height: 18, fontSize: '0.5rem', fontWeight: 700,
+                                        backgroundColor: alpha(
+                                            log.message_type?.startsWith('MT') ? '#FF9800' : '#4FC3F7', 0.15
+                                        ),
+                                        color: log.message_type?.startsWith('MT') ? '#FF9800' : '#4FC3F7',
+                                    }} />
+                                    <Chip label={log.status} size="small" sx={{
+                                        height: 18, fontSize: '0.5rem', fontWeight: 700,
+                                        backgroundColor: alpha(
+                                            log.status === 'success' ? '#4CAF50' : '#f44336', 0.15
+                                        ),
+                                        color: log.status === 'success' ? '#4CAF50' : '#f44336',
+                                    }} />
+                                    <Typography sx={{ fontSize: '0.65rem', fontWeight: 700, color: palette.textPrimary, textAlign: 'center' }}>
+                                        {log.messages_processed}
+                                    </Typography>
+                                    <Typography sx={{ fontSize: '0.55rem', color: 'text.secondary', textTransform: 'capitalize' }}>
+                                        {log.run_type}
+                                    </Typography>
+                                    <Typography sx={{ fontSize: '0.55rem', color: 'text.secondary', fontFamily: '"JetBrains Mono", monospace' }}>
+                                        {new Date(log.processed_at).toLocaleString()}
+                                    </Typography>
+                                </Box>
+                            ))}
+                        </Box>
+                    </Box>
+                )}
+            </DialogContent>
+        </Dialog>
+    );
+}
+
 export default function SwiftPackagePage() {
     const [packages, setPackages] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -47,6 +223,8 @@ export default function SwiftPackagePage() {
     const [editPkg, setEditPkg] = useState(null);
     const [deleteOpen, setDeleteOpen] = useState(false);
     const [deleteTarget, setDeleteTarget] = useState(null);
+    const [logsPkg, setLogsPkg] = useState(null);
+    const [logsOpen, setLogsOpen] = useState(false);
     const [snack, setSnack] = useState({ open: false, msg: '', severity: 'success' });
 
     // Form state
@@ -94,6 +272,10 @@ export default function SwiftPackagePage() {
     };
 
     const openEdit = (pkg) => {
+        if (pkg.status === 'active' || pkg.status === 'running') {
+            setSnack({ open: true, msg: 'Stop the package before editing', severity: 'warning' });
+            return;
+        }
         const allTypes = [...types.MT.map(t => t.code), ...types.MX.map(t => t.code)];
         const isAll = !pkg.message_types?.length || pkg.message_types.includes('ALL');
         setForm({
@@ -176,17 +358,21 @@ export default function SwiftPackagePage() {
         }
     };
 
-    const handleToggleStatus = async (pkg) => {
-        const newStatus = pkg.status === 'active' ? 'inactive' : 'active';
+    /* ─── Status control: start / pause / stop ─── */
+    const handleStatusAction = async (pkg, action) => {
         try {
-            await api.put(`/transformation/swift-packages/${pkg.id}/`, { status: newStatus });
+            await api.post(`/transformation/swift-packages/${pkg.id}/${action}/`);
+            setSnack({
+                open: true, severity: 'success',
+                msg: `Package ${action === 'start' ? 'started' : action === 'pause' ? 'paused' : 'stopped'}`,
+            });
             fetchPackages();
         } catch {
-            setSnack({ open: true, msg: 'Status update failed', severity: 'error' });
+            setSnack({ open: true, msg: `${action} failed`, severity: 'error' });
         }
     };
 
-    const gridCols = '40px 1fr 1.2fr 90px 110px 90px 60px 80px';
+    const gridCols = '40px 1fr 1.2fr 90px 110px 90px 80px 60px 160px';
 
     return (
         <Box>
@@ -226,9 +412,14 @@ export default function SwiftPackagePage() {
             }}>
                 {/* Header row */}
                 <Box sx={{
-                    display: 'grid', gridTemplateColumns: gridCols, px: 1.5, py: 1,
-                    borderBottom: `2px solid ${alpha(palette.accentPrimary, 0.3)}`,
+                    display: 'grid', gridTemplateColumns: gridCols, px: 0, py: 0,
+                    borderBottom: `2px solid ${palette.accentPrimary}`,
                     backgroundColor: alpha(palette.bgSecondary, 0.3),
+                    '& > *': {
+                        px: 1, py: 1,
+                        borderRight: `1px solid ${alpha(palette.border, 0.5)}`,
+                        '&:last-child': { borderRight: 'none' },
+                    },
                 }}>
                     <Typography sx={{ ...headerCellSx, textAlign: 'center' }}>#</Typography>
                     <Typography sx={headerCellSx}>Name</Typography>
@@ -236,6 +427,7 @@ export default function SwiftPackagePage() {
                     <Typography sx={headerCellSx}>Output</Typography>
                     <Typography sx={headerCellSx}>Mode</Typography>
                     <Typography sx={headerCellSx}>Pattern</Typography>
+                    <Typography sx={{ ...headerCellSx, textAlign: 'center' }}>Runs</Typography>
                     <Typography sx={{ ...headerCellSx, textAlign: 'center' }}>Status</Typography>
                     <Typography sx={{ ...headerCellSx, textAlign: 'center' }}>Actions</Typography>
                 </Box>
@@ -254,22 +446,32 @@ export default function SwiftPackagePage() {
                     <Box sx={{ maxHeight: 'calc(100vh - 300px)', overflowY: 'auto' }}>
                         {packages.map((pkg, idx) => {
                             const isAll = !pkg.message_types?.length || pkg.message_types.includes('ALL');
-                            const typesLabel = isAll ? 'ALL' : pkg.message_types.join(', ');
-                            const isActive = pkg.status === 'active';
+                            const isActive = pkg.status === 'active' || pkg.status === 'running';
+                            const isPaused = pkg.status === 'paused';
+                            const isInactive = pkg.status === 'inactive';
                             const fmtInfo = OUTPUT_FORMATS.find(f => f.value === pkg.output_format) || OUTPUT_FORMATS[0];
+
+                            const statusColor = isActive ? '#4CAF50' : isPaused ? '#FF9800' : '#f44336';
+                            const statusLabel = pkg.status.charAt(0).toUpperCase() + pkg.status.slice(1);
 
                             return (
                                 <Box key={pkg.id} sx={{
-                                    display: 'grid', gridTemplateColumns: gridCols, px: 1.5,
-                                    borderBottom: `1px solid ${alpha(palette.border, 0.3)}`,
-                                    '&:hover': { backgroundColor: alpha(palette.accentPrimary, 0.03) },
+                                    display: 'grid', gridTemplateColumns: gridCols, px: 0,
+                                    borderBottom: `1px solid ${palette.border}`,
+                                    '&:hover': { backgroundColor: alpha(palette.accentPrimary, 0.04) },
                                     alignItems: 'center',
-                                    opacity: isActive ? 1 : 0.5,
+                                    opacity: isInactive ? 0.5 : 1,
+                                    '& > *': {
+                                        px: 1, py: 0.8,
+                                        borderRight: `1px solid ${alpha(palette.border, 0.5)}`,
+                                        '&:last-child': { borderRight: 'none' },
+                                        overflow: 'hidden',
+                                    },
                                 }}>
-                                    <Typography sx={{ fontSize: '0.65rem', textAlign: 'center', color: 'text.disabled', py: 0.8 }}>
+                                    <Typography sx={{ fontSize: '0.65rem', textAlign: 'center', color: 'text.disabled' }}>
                                         {idx + 1}
                                     </Typography>
-                                    <Box sx={{ py: 0.8 }}>
+                                    <Box>
                                         <Typography sx={{
                                             fontSize: '0.75rem', fontWeight: 700,
                                             color: palette.accentPrimary,
@@ -282,7 +484,7 @@ export default function SwiftPackagePage() {
                                             </Typography>
                                         )}
                                     </Box>
-                                    <Box sx={{ py: 0.8, display: 'flex', flexWrap: 'wrap', gap: 0.3 }}>
+                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.3 }}>
                                         {isAll ? (
                                             <Chip label="ALL TYPES" size="small" sx={{
                                                 height: 18, fontSize: '0.55rem', fontWeight: 700,
@@ -323,21 +525,66 @@ export default function SwiftPackagePage() {
                                     }}>
                                         {pkg.file_pattern}
                                     </Typography>
-                                    <Box sx={{ textAlign: 'center' }}>
-                                        <Tooltip title={isActive ? 'Active — click to deactivate' : 'Inactive — click to activate'}>
-                                            <IconButton size="small" onClick={() => handleToggleStatus(pkg)}
-                                                sx={{ color: isActive ? '#4CAF50' : '#f44336', p: 0.3 }}>
-                                                {isActive ? <ActiveIcon sx={{ fontSize: 18 }} /> : <InactiveIcon sx={{ fontSize: 18 }} />}
-                                            </IconButton>
-                                        </Tooltip>
+                                    {/* Run Log Badge */}
+                                    <Box sx={{ textAlign: 'center', display: 'flex', justifyContent: 'center' }}>
+                                        <RunLogBadge
+                                            summary={pkg.run_log_summary}
+                                            onClick={() => { setLogsPkg(pkg); setLogsOpen(true); }}
+                                        />
                                     </Box>
-                                    <Box sx={{ textAlign: 'center', display: 'flex', justifyContent: 'center', gap: 0.3 }}>
+                                    {/* Status Chip */}
+                                    <Box sx={{ textAlign: 'center' }}>
+                                        <Chip label={statusLabel} size="small" sx={{
+                                            height: 20, fontSize: '0.5rem', fontWeight: 700,
+                                            backgroundColor: alpha(statusColor, 0.15),
+                                            color: statusColor,
+                                            fontFamily: '"JetBrains Mono", monospace',
+                                        }} />
+                                    </Box>
+                                    {/* Actions: Start/Pause/Stop + Edit + Delete */}
+                                    <Box sx={{ display: 'flex', justifyContent: 'center', gap: 0.3, alignItems: 'center' }}>
+                                        {/* Start */}
+                                        <Tooltip title="Start">
+                                            <span>
+                                                <IconButton size="small"
+                                                    disabled={isActive}
+                                                    onClick={() => handleStatusAction(pkg, 'start')}
+                                                    sx={{ color: '#4CAF50', p: 0.3, '&.Mui-disabled': { color: alpha('#4CAF50', 0.2) } }}>
+                                                    <PlayIcon sx={{ fontSize: 16 }} />
+                                                </IconButton>
+                                            </span>
+                                        </Tooltip>
+                                        {/* Pause */}
+                                        <Tooltip title="Pause">
+                                            <span>
+                                                <IconButton size="small"
+                                                    disabled={!isActive}
+                                                    onClick={() => handleStatusAction(pkg, 'pause')}
+                                                    sx={{ color: '#FF9800', p: 0.3, '&.Mui-disabled': { color: alpha('#FF9800', 0.2) } }}>
+                                                    <PauseIcon sx={{ fontSize: 16 }} />
+                                                </IconButton>
+                                            </span>
+                                        </Tooltip>
+                                        {/* Stop */}
+                                        <Tooltip title="Stop">
+                                            <span>
+                                                <IconButton size="small"
+                                                    disabled={isInactive}
+                                                    onClick={() => handleStatusAction(pkg, 'stop')}
+                                                    sx={{ color: '#f44336', p: 0.3, '&.Mui-disabled': { color: alpha('#f44336', 0.2) } }}>
+                                                    <StopIcon sx={{ fontSize: 16 }} />
+                                                </IconButton>
+                                            </span>
+                                        </Tooltip>
+                                        <Divider orientation="vertical" flexItem sx={{ mx: 0.3, borderColor: alpha(palette.border, 0.3) }} />
+                                        {/* Edit */}
                                         <Tooltip title="Edit">
                                             <IconButton size="small" onClick={() => openEdit(pkg)}
                                                 sx={{ color: palette.info, p: 0.3 }}>
                                                 <EditIcon sx={{ fontSize: 15 }} />
                                             </IconButton>
                                         </Tooltip>
+                                        {/* Delete */}
                                         <Tooltip title="Delete">
                                             <IconButton size="small"
                                                 onClick={() => { setDeleteTarget(pkg); setDeleteOpen(true); }}
@@ -353,20 +600,25 @@ export default function SwiftPackagePage() {
                 )}
             </Paper>
 
+            {/* Run Logs Dialog */}
+            <RunLogsDialog open={logsOpen} onClose={() => setLogsOpen(false)} pkg={logsPkg} />
+
             {/* Create/Edit Dialog */}
             <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="md" fullWidth
-                PaperProps={{ sx: {
-                    backgroundColor: palette.bgSecondary,
-                    border: `1px solid ${alpha(palette.accentPrimary, 0.2)}`,
-                    backgroundImage: `linear-gradient(135deg, ${alpha(palette.bgSecondary, 0.98)} 0%, ${alpha(palette.bgPrimary, 0.95)} 100%)`,
-                    '& .MuiOutlinedInput-root': {
-                        '& fieldset': { borderColor: alpha(palette.border, 0.6) },
-                        '&:hover fieldset': { borderColor: alpha(palette.accentPrimary, 0.4) },
-                        '&.Mui-focused fieldset': { borderColor: palette.accentPrimary },
-                    },
-                    '& .MuiInputLabel-root': { color: alpha(palette.textPrimary, 0.5), fontSize: '0.8rem' },
-                    '& .MuiInputLabel-root.Mui-focused': { color: palette.accentPrimary },
-                } }}>
+                PaperProps={{
+                    sx: {
+                        backgroundColor: palette.bgSecondary,
+                        border: `1px solid ${alpha(palette.accentPrimary, 0.2)}`,
+                        backgroundImage: `linear-gradient(135deg, ${alpha(palette.bgSecondary, 0.98)} 0%, ${alpha(palette.bgPrimary, 0.95)} 100%)`,
+                        '& .MuiOutlinedInput-root': {
+                            '& fieldset': { borderColor: alpha(palette.border, 0.6) },
+                            '&:hover fieldset': { borderColor: alpha(palette.accentPrimary, 0.4) },
+                            '&.Mui-focused fieldset': { borderColor: palette.accentPrimary },
+                        },
+                        '& .MuiInputLabel-root': { color: alpha(palette.textPrimary, 0.5), fontSize: '0.8rem' },
+                        '& .MuiInputLabel-root.Mui-focused': { color: palette.accentPrimary },
+                    }
+                }}>
                 <DialogTitle sx={{
                     display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1,
                     borderBottom: `1px solid ${alpha(palette.border, 0.3)}`,
@@ -424,8 +676,10 @@ export default function SwiftPackagePage() {
                             <TextField label="File Pattern" size="small"
                                 value={form.file_pattern} onChange={e => setForm({ ...form, file_pattern: e.target.value })}
                                 helperText="e.g. *.fin, *.xml, *.*"
-                                sx={{ width: 160, '& .MuiOutlinedInput-root': { fontSize: '0.85rem' },
-                                    '& .MuiFormHelperText-root': { fontSize: '0.55rem', color: alpha(palette.textPrimary, 0.3) } }}
+                                sx={{
+                                    width: 160, '& .MuiOutlinedInput-root': { fontSize: '0.85rem' },
+                                    '& .MuiFormHelperText-root': { fontSize: '0.55rem', color: alpha(palette.textPrimary, 0.3) }
+                                }}
                             />
                         </Box>
 
@@ -646,8 +900,10 @@ export default function SwiftPackagePage() {
                 </DialogContent>
                 <DialogActions sx={{ px: 3, py: 2, borderTop: `1px solid ${alpha(palette.border, 0.3)}` }}>
                     <Button onClick={() => setDialogOpen(false)}
-                        sx={{ color: 'text.secondary', fontWeight: 600, fontSize: '0.8rem',
-                            '&:hover': { backgroundColor: alpha(palette.border, 0.15) } }}>
+                        sx={{
+                            color: 'text.secondary', fontWeight: 600, fontSize: '0.8rem',
+                            '&:hover': { backgroundColor: alpha(palette.border, 0.15) }
+                        }}>
                         Cancel
                     </Button>
                     <Button variant="contained" startIcon={<SaveIcon />}

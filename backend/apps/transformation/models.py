@@ -410,6 +410,8 @@ class SwiftPackage(models.Model):
     class Status(models.TextChoices):
         ACTIVE = 'active', 'Active'
         INACTIVE = 'inactive', 'Inactive'
+        RUNNING = 'running', 'Running'
+        PAUSED = 'paused', 'Paused'
 
     name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True, default='')
@@ -460,3 +462,42 @@ class SwiftPackage(models.Model):
         if not self.message_types or 'ALL' in self.message_types:
             return True
         return msg_type in self.message_types
+
+
+class SwiftRunLog(models.Model):
+    """Tracks each SWIFT message processing run — success/failure, counts, errors."""
+
+    class Status(models.TextChoices):
+        SUCCESS = 'success', 'Success'
+        FAILED = 'failed', 'Failed'
+
+    class RunType(models.TextChoices):
+        INSTANT = 'instant', 'Instant (File Sense)'
+        BATCH = 'batch', 'Batch (Scheduled)'
+        MANUAL = 'manual', 'Manual (Ad-hoc)'
+
+    swift_package = models.ForeignKey(
+        SwiftPackage,
+        on_delete=models.CASCADE,
+        related_name='run_logs',
+        null=True, blank=True,
+    )
+    original_filename = models.CharField(max_length=500)
+    output_filename = models.CharField(max_length=500, blank=True, default='')
+    message_type = models.CharField(max_length=30, blank=True, default='')
+    reference = models.CharField(max_length=100, blank=True, default='')
+    messages_processed = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.SUCCESS)
+    error_message = models.TextField(blank=True, default='')
+    run_type = models.CharField(
+        max_length=10, choices=RunType.choices, default=RunType.INSTANT,
+    )
+    processed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-processed_at']
+        verbose_name = 'SWIFT Run Log'
+        verbose_name_plural = 'SWIFT Run Logs'
+
+    def __str__(self):
+        return f'{self.original_filename} — {self.message_type} ({self.get_status_display()})'

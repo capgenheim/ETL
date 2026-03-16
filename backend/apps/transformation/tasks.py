@@ -399,7 +399,7 @@ def _get_or_create_tag(name, color='#40c4ff'):
 
 def _register_swift_file_log(original_filename, raw_bytes, output_filename='',
                               status_val='success', error_message='',
-                              msg_type='', is_mx=False):
+                              msg_type='', is_mx=False, swift_package=None):
     """
     Create an InboundFileLog entry for a SWIFT file with auto tags.
     This makes SWIFT files visible in File Manager (Source Files / Unprocessed Files).
@@ -437,14 +437,35 @@ def _register_swift_file_log(original_filename, raw_bytes, output_filename='',
     return log
 
 
+def _register_swift_run_log(swift_package, original_filename, output_filename='',
+                             msg_type='', reference='', messages_processed=0,
+                             status_val='success', error_message='',
+                             run_type='instant'):
+    """Create a SwiftRunLog entry for tracking package-level run statistics."""
+    from .models import SwiftRunLog
+    return SwiftRunLog.objects.create(
+        swift_package=swift_package,
+        original_filename=original_filename,
+        output_filename=output_filename,
+        message_type=msg_type,
+        reference=reference,
+        messages_processed=messages_processed,
+        status=status_val,
+        error_message=error_message,
+        run_type=run_type,
+    )
+
+
 @shared_task(name='transformation.swift_file_sense_scan')
 def swift_file_sense_scan():
     """
     Scan sft_inbound directory for SWIFT MT (.txt/.fin) and MX (.xml) files.
     For each file found, dispatch process_swift_file task.
+    Respects SwiftPackage status — only processes for active packages.
     """
     from .swift_parser import is_swift_message
     from .mx_parser import is_mx_message
+    from .models import SwiftPackage
 
     inbound_dir = settings.SFT_INBOUND_DIR
 
@@ -460,6 +481,13 @@ def swift_file_sense_scan():
     if not files:
         return {'scanned': 0, 'dispatched': 0}
 
+    # Get active SWIFT packages
+    active_packages = SwiftPackage.objects.filter(
+        status__in=[SwiftPackage.Status.ACTIVE, SwiftPackage.Status.RUNNING],
+    )
+    if not active_packages.exists():
+        return {'scanned': len(files), 'dispatched': 0, 'reason': 'no active packages'}
+
     dispatched = 0
     for filename in files:
         filepath = os.path.join(inbound_dir, filename)
@@ -467,7 +495,16 @@ def swift_file_sense_scan():
             with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
                 content = f.read()
             if is_swift_message(content) or is_mx_message(content):
-                process_swift_file.delay(filepath, filename)
+                # Find matching package by file pattern
+                matched_pkg = None
+                for pkg in active_packages:
+                    if fnmatch.fnmatch(filename.lower(), pkg.file_pattern.lower()):
+                        matched_pkg = pkg
+                        break
+                process_swift_file.delay(
+                    filepath, filename,
+                    swift_package_id=matched_pkg.id if matched_pkg else None,
+                )
                 dispatched += 1
         except Exception:
             pass
@@ -476,7 +513,7 @@ def swift_file_sense_scan():
 
 
 @shared_task(name='transformation.process_swift_file', bind=True, max_retries=2)
-def process_swift_file(self, filepath, original_filename):
+def process_swift_file(self, filepath, original_filename, swift_package_id=None):
     """
     Process a single SWIFT inbound file (MT or MX):
     1. Read file content
@@ -485,14 +522,25 @@ def process_swift_file(self, filepath, original_filename):
     4. Save SwiftMessage record to DB
     5. Generate Excel to sft_outbound
     6. Register in InboundFileLog with auto tags
-    7. Remove source file from sft_inbound
+    7. Create SwiftRunLog entry for the package
+    8. Remove source file from sft_inbound
     """
-    from .models import SwiftMessage
+    from .models import SwiftMessage, SwiftPackage
     from .swift_parser import parse_swift_message, is_swift_message
     from .mx_parser import parse_mx_message, is_mx_message
     from .swift_excel import generate_excel
 
     outbound_dir = settings.SFT_OUTBOUND_DIR
+
+    # Resolve swift package if provided
+    swift_package = None
+    if swift_package_id:
+        try:
+            swift_package = SwiftPackage.objects.get(pk=swift_package_id)
+            swift_package.status = SwiftPackage.Status.RUNNING
+            swift_package.save(update_fields=['status', 'updated_at'])
+        except SwiftPackage.DoesNotExist:
+            pass
 
     try:
         # 1. Read file
@@ -544,6 +592,7 @@ def process_swift_file(self, filepath, original_filename):
                 status_val='success',
                 msg_type=parsed['message_type'],
                 is_mx=is_mx,
+                swift_package=swift_package,
             )
 
             results.append({
@@ -553,7 +602,23 @@ def process_swift_file(self, filepath, original_filename):
                 'excel': excel_name,
             })
 
-        # 7. Remove source file
+        # 7. Create SwiftRunLog on success
+        if swift_package:
+            _register_swift_run_log(
+                swift_package=swift_package,
+                original_filename=original_filename,
+                output_filename=results[-1]['excel'] if results else '',
+                msg_type=results[-1]['type'] if results else '',
+                reference=results[-1]['ref'] if results else '',
+                messages_processed=len(results),
+                status_val='success',
+                run_type='instant',
+            )
+            # Restore status
+            swift_package.status = SwiftPackage.Status.ACTIVE
+            swift_package.save(update_fields=['status', 'updated_at'])
+
+        # 8. Remove source file
         if os.path.exists(filepath):
             os.remove(filepath)
 
@@ -583,7 +648,19 @@ def process_swift_file(self, filepath, original_filename):
                 raw_bytes=raw.encode('utf-8'),
                 status_val='failed',
                 error_message=str(exc),
+                swift_package=swift_package,
             )
+            # Create SwiftRunLog on failure
+            if swift_package:
+                _register_swift_run_log(
+                    swift_package=swift_package,
+                    original_filename=original_filename,
+                    status_val='failed',
+                    error_message=str(exc),
+                    run_type='instant',
+                )
+                swift_package.status = SwiftPackage.Status.ACTIVE
+                swift_package.save(update_fields=['status', 'updated_at'])
         except Exception:
             pass
 

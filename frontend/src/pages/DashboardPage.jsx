@@ -23,7 +23,7 @@ import { alpha } from '@mui/material/styles';
 import { palette } from '../theme/bloombergTheme';
 import api from '../services/api';
 
-function StatCard({ title, value, subtitle, icon: Icon, color, loading }) {
+function StatCard({ title, value, subtitle, color, loading }) {
     return (
         <Card
             sx={{
@@ -42,51 +42,34 @@ function StatCard({ title, value, subtitle, icon: Icon, color, loading }) {
             }}
         >
             <CardContent sx={{ p: 3 }}>
-                <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-                    <Box>
-                        <Typography
-                            variant="overline"
-                            sx={{ color: 'text.secondary', mb: 0.5, display: 'block' }}
-                        >
-                            {title}
-                        </Typography>
-                        {loading ? (
-                            <Skeleton width={60} height={40} />
-                        ) : (
-                            <Typography
-                                variant="h3"
-                                sx={{
-                                    fontFamily: '"Roboto Mono", monospace',
-                                    fontWeight: 700,
-                                    color,
-                                }}
-                            >
-                                {value}
-                            </Typography>
-                        )}
-                        {subtitle && !loading && (
-                            <Typography
-                                variant="caption"
-                                sx={{ color: 'text.secondary', mt: 0.5, display: 'block' }}
-                            >
-                                {subtitle}
-                            </Typography>
-                        )}
-                    </Box>
-                    <Box
+                <Typography
+                    variant="overline"
+                    sx={{ color: 'text.secondary', mb: 0.5, display: 'block' }}
+                >
+                    {title}
+                </Typography>
+                {loading ? (
+                    <Skeleton width={60} height={40} />
+                ) : (
+                    <Typography
+                        variant="h3"
                         sx={{
-                            width: 48,
-                            height: 48,
-                            borderRadius: '12px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            backgroundColor: alpha(color, 0.12),
+                            fontFamily: '"Roboto Mono", monospace',
+                            fontWeight: 700,
+                            color,
                         }}
                     >
-                        <Icon sx={{ fontSize: 28, color }} />
-                    </Box>
-                </Stack>
+                        {value}
+                    </Typography>
+                )}
+                {subtitle && !loading && (
+                    <Typography
+                        variant="caption"
+                        sx={{ color: 'text.secondary', mt: 0.5, display: 'block' }}
+                    >
+                        {subtitle}
+                    </Typography>
+                )}
             </CardContent>
         </Card>
     );
