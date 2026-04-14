@@ -226,6 +226,7 @@ export default function SwiftPackagePage() {
     const [logsPkg, setLogsPkg] = useState(null);
     const [logsOpen, setLogsOpen] = useState(false);
     const [snack, setSnack] = useState({ open: false, msg: '', severity: 'success' });
+    const [swiftDirs, setSwiftDirs] = useState([]);
 
     // Form state
     const [form, setForm] = useState({
@@ -238,6 +239,8 @@ export default function SwiftPackagePage() {
         file_pattern: '*.*',
         status: 'active',
         selectAll: false,
+        delivery_env: 'dev',
+        delivery_target: '',
     });
 
     const fetchPackages = useCallback(async () => {
@@ -256,13 +259,21 @@ export default function SwiftPackagePage() {
         } catch (e) { console.error(e); }
     }, []);
 
-    useEffect(() => { fetchPackages(); fetchTypes(); }, [fetchPackages, fetchTypes]);
+    const fetchSwiftDirs = useCallback(async () => {
+        try {
+            const res = await api.get('/transformation/swift-directories/');
+            setSwiftDirs(res.data);
+        } catch (e) { console.error(e); }
+    }, []);
+
+    useEffect(() => { fetchPackages(); fetchTypes(); fetchSwiftDirs(); }, [fetchPackages, fetchTypes, fetchSwiftDirs]);
 
     const resetForm = () => setForm({
         name: '', description: '', message_types: [],
         output_format: 'xlsx', processing_mode: 'instant',
         batch_interval_minutes: 30,
         file_pattern: '*.*', status: 'active', selectAll: false,
+        delivery_env: 'dev', delivery_target: '',
     });
 
     const openCreate = () => {
@@ -288,6 +299,8 @@ export default function SwiftPackagePage() {
             file_pattern: pkg.file_pattern,
             status: pkg.status,
             selectAll: isAll,
+            delivery_env: pkg.delivery_env || 'dev',
+            delivery_target: pkg.delivery_target || '',
         });
         setEditPkg(pkg);
         setDialogOpen(true);
@@ -329,6 +342,8 @@ export default function SwiftPackagePage() {
             processing_mode: form.processing_mode,
             file_pattern: form.file_pattern,
             status: form.status,
+            delivery_env: form.delivery_env,
+            delivery_target: form.delivery_target || null,
         };
 
         try {
@@ -372,7 +387,7 @@ export default function SwiftPackagePage() {
         }
     };
 
-    const gridCols = '40px 1fr 1.2fr 90px 110px 90px 80px 60px 160px';
+    const gridCols = '40px 1fr 1.2fr 90px 110px 100px 90px 60px 160px';
 
     return (
         <Box>
@@ -427,6 +442,7 @@ export default function SwiftPackagePage() {
                     <Typography sx={headerCellSx}>Output</Typography>
                     <Typography sx={headerCellSx}>Mode</Typography>
                     <Typography sx={headerCellSx}>Pattern</Typography>
+                    <Typography sx={headerCellSx}>Target</Typography>
                     <Typography sx={{ ...headerCellSx, textAlign: 'center' }}>Runs</Typography>
                     <Typography sx={{ ...headerCellSx, textAlign: 'center' }}>Status</Typography>
                     <Typography sx={{ ...headerCellSx, textAlign: 'center' }}>Actions</Typography>
@@ -525,6 +541,14 @@ export default function SwiftPackagePage() {
                                     }}>
                                         {pkg.file_pattern}
                                     </Typography>
+                                    <Box>
+                                        <Typography sx={{ fontSize: '0.65rem', fontWeight: 600, color: palette.textPrimary }}>
+                                            {pkg.delivery_target_name || '—'}
+                                        </Typography>
+                                        <Typography sx={{ fontSize: '0.55rem', color: palette.accentPrimary, textTransform: 'uppercase' }}>
+                                            {pkg.delivery_env}
+                                        </Typography>
+                                    </Box>
                                     {/* Run Log Badge */}
                                     <Box sx={{ textAlign: 'center', display: 'flex', justifyContent: 'center' }}>
                                         <RunLogBadge
@@ -800,6 +824,42 @@ export default function SwiftPackagePage() {
                                     />
                                 </Box>
                             )}
+                        </Box>
+
+                        <Divider sx={{ borderColor: alpha(palette.accentPrimary, 0.12) }} />
+
+                        {/* Delivery Configuration */}
+                        <Box sx={{ display: 'flex', gap: 2 }}>
+                            <FormControl size="small" sx={{ width: 140 }}>
+                                <InputLabel>Delivery Environment</InputLabel>
+                                <Select value={form.delivery_env} label="Delivery Environment"
+                                    onChange={e => setForm({ ...form, delivery_env: e.target.value })}>
+                                    <MenuItem value="dev">DEV</MenuItem>
+                                    <MenuItem value="staging">STAGING</MenuItem>
+                                    <MenuItem value="live">LIVE</MenuItem>
+                                </Select>
+                            </FormControl>
+                            <FormControl size="small" sx={{ minWidth: 200, flex: 1 }}>
+                                <InputLabel>Delivery Target (Folder)</InputLabel>
+                                <Select value={form.delivery_target} label="Delivery Target (Folder)"
+                                    onChange={e => setForm({ ...form, delivery_target: e.target.value })}>
+                                    <MenuItem value=""><em>None (Archive automatically)</em></MenuItem>
+                                    {swiftDirs.map(dir => (
+                                        <MenuItem key={dir.id} value={dir.id}>
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                <Typography sx={{ fontSize: '0.8rem', fontWeight: dir.is_default ? 700 : 400 }}>
+                                                    {dir.name}
+                                                </Typography>
+                                                {dir.is_default && (
+                                                    <Typography sx={{ fontSize: '0.6rem', color: palette.accentPrimary }}>
+                                                        (Default)
+                                                    </Typography>
+                                                )}
+                                            </Box>
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
                         </Box>
 
                         <Divider sx={{ borderColor: alpha(palette.accentPrimary, 0.12) }} />
