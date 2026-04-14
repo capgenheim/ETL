@@ -1,5 +1,8 @@
 from rest_framework import serializers
-from .models import UploadedFile, Package, FieldMapping, InboundFileLog, DirectoryRegistry
+from .models import (
+    UploadedFile, Package, FieldMapping, InboundFileLog,
+    DirectoryRegistry, SwiftDirectoryRegistry,
+)
 
 
 class UploadedFileSerializer(serializers.ModelSerializer):
@@ -166,3 +169,24 @@ class DirectoryRegistrySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('Name must contain only lowercase letters, numbers, underscores, and hyphens.')
         return value
 
+
+class SwiftDirectoryRegistrySerializer(serializers.ModelSerializer):
+    created_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SwiftDirectoryRegistry
+        fields = ['id', 'name', 'is_default', 'created_by_name', 'created_at']
+        read_only_fields = ['id', 'is_default', 'created_by_name', 'created_at']
+
+    def get_created_by_name(self, obj):
+        if not obj.created_by:
+            return 'System'
+        full = f'{obj.created_by.first_name} {obj.created_by.last_name}'.strip()
+        return full or obj.created_by.username
+
+    def validate_name(self, value):
+        import re
+        value = value.strip().lower()
+        if not re.match(r'^[a-z0-9_-]+$', value):
+            raise serializers.ValidationError('Name must contain only lowercase letters, numbers, underscores, and hyphens.')
+        return value

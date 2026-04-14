@@ -7,7 +7,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import SwiftPackage, SwiftRunLog
+from .models import SwiftPackage, SwiftRunLog, SwiftDirectoryRegistry
 
 
 # All known MT and MX types for the selector
@@ -78,6 +78,9 @@ def _serialize_package(pkg):
         'batch_interval_minutes': pkg.batch_interval_minutes,
         'file_pattern': pkg.file_pattern,
         'status': pkg.status,
+        'delivery_env': pkg.delivery_env,
+        'delivery_target': pkg.delivery_target_id,
+        'delivery_target_name': pkg.delivery_target.name if pkg.delivery_target else None,
         'run_log_summary': _run_log_summary(pkg),
         'created_at': pkg.created_at.isoformat(),
         'updated_at': pkg.updated_at.isoformat(),
@@ -108,6 +111,20 @@ class SwiftPackageListView(APIView):
         if not msg_types:
             msg_types = ['ALL']
 
+        # Validate delivery_env
+        delivery_env = d.get('delivery_env', 'dev')
+        if delivery_env not in ('dev', 'staging', 'live'):
+            return Response({'error': f'Invalid delivery_env: {delivery_env}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Resolve delivery target
+        delivery_target = None
+        target_id = d.get('delivery_target')
+        if target_id:
+            try:
+                delivery_target = SwiftDirectoryRegistry.objects.get(pk=target_id)
+            except SwiftDirectoryRegistry.DoesNotExist:
+                return Response({'error': 'Delivery target not found'}, status=status.HTTP_400_BAD_REQUEST)
+
         pkg = SwiftPackage.objects.create(
             name=name,
             description=d.get('description', ''),
@@ -117,6 +134,8 @@ class SwiftPackageListView(APIView):
             batch_interval_minutes=d.get('batch_interval_minutes', 30),
             file_pattern=d.get('file_pattern', '*.*'),
             status=d.get('status', 'active'),
+            delivery_env=delivery_env,
+            delivery_target=delivery_target,
         )
         return Response(_serialize_package(pkg), status=status.HTTP_201_CREATED)
 
@@ -162,6 +181,18 @@ class SwiftPackageDetailView(APIView):
             pkg.file_pattern = d['file_pattern']
         if 'status' in d:
             pkg.status = d['status']
+        if 'delivery_env' in d:
+            if d['delivery_env'] not in ('dev', 'staging', 'live'):
+                return Response({'error': 'Invalid delivery_env'}, status=status.HTTP_400_BAD_REQUEST)
+            pkg.delivery_env = d['delivery_env']
+        if 'delivery_target' in d:
+            if d['delivery_target']:
+                try:
+                    pkg.delivery_target = SwiftDirectoryRegistry.objects.get(pk=d['delivery_target'])
+                except SwiftDirectoryRegistry.DoesNotExist:
+                    return Response({'error': 'Delivery target not found'}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                pkg.delivery_target = None
 
         pkg.save()
         return Response(_serialize_package(pkg))

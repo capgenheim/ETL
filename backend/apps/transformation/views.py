@@ -4,11 +4,11 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import UploadedFile, Package, FieldMapping, DirectoryRegistry
+from .models import UploadedFile, Package, FieldMapping, DirectoryRegistry, SwiftDirectoryRegistry
 from .serializers import (
     UploadedFileSerializer, FileUploadSerializer,
     PackageSerializer, FieldMappingSerializer,
-    DirectoryRegistrySerializer,
+    DirectoryRegistrySerializer, SwiftDirectoryRegistrySerializer,
 )
 from .services import extract_headers, HeaderExtractionError
 
@@ -47,6 +47,38 @@ class DirectoryListCreateView(APIView):
 
         return Response(DirectoryRegistrySerializer(directory).data, status=status.HTTP_201_CREATED)
 
+
+class SwiftDirectoryListCreateView(APIView):
+    """
+    GET:  List SWIFT delivery directories.
+    POST: Create a new SWIFT directory — creates in all 3 environments.
+    """
+
+    def get(self, request):
+        qs = SwiftDirectoryRegistry.objects.all()
+        search = request.query_params.get('search')
+        if search:
+            qs = qs.filter(name__icontains=search)
+        return Response(SwiftDirectoryRegistrySerializer(qs, many=True).data)
+
+    def post(self, request):
+        serializer = SwiftDirectoryRegistrySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        name = serializer.validated_data['name']
+        if SwiftDirectoryRegistry.objects.filter(name=name).exists():
+            return Response(
+                {'error': f'SWIFT directory "{name}" already exists.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        directory = serializer.save(created_by=request.user)
+        directory.create_physical_dirs()
+
+        return Response(
+            SwiftDirectoryRegistrySerializer(directory).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 class FileUploadView(APIView):
     """

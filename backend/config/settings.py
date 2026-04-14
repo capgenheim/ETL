@@ -231,6 +231,11 @@ UNFOLD = {
                         "link": "/admin/transformation/directoryregistry/",
                     },
                     {
+                        "title": "SWIFT Directories",
+                        "icon": "swap_horiz",
+                        "link": "/admin/transformation/swiftdirectoryregistry/",
+                    },
+                    {
                         "title": "File Tags",
                         "icon": "tag",
                         "link": "/admin/transformation/filetag/",

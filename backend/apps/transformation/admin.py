@@ -2,8 +2,16 @@ from django.contrib import admin
 from unfold.admin import ModelAdmin, TabularInline
 from .models import (
     UploadedFile, Package, FieldMapping, InboundFileLog,
-    FileTag, DirectoryRegistry,
+    FileTag, DirectoryRegistry, SwiftDirectoryRegistry,
 )
+
+
+@admin.register(SwiftDirectoryRegistry)
+class SwiftDirectoryRegistryAdmin(ModelAdmin):
+    list_display = ('name', 'is_default', 'created_by', 'created_at')
+    list_filter = ('is_default',)
+    search_fields = ('name',)
+    readonly_fields = ('created_at',)
 
 
 @admin.register(DirectoryRegistry)

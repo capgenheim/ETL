@@ -85,6 +85,48 @@ class DirectoryRegistry(models.Model):
             os.makedirs(os.path.join(settings.TRFM_OUTBOUND_DIR, self.name), exist_ok=True)
 
 
+SWIFT_ENVIRONMENTS = ['dev', 'staging', 'live']
+
+
+class SwiftDirectoryRegistry(models.Model):
+    """Tracks delivery sub-directories inside sft_outbound/<env>/.
+    Each entry creates a folder in all three environments (dev, staging, live).
+    Default entries: imatch, mpower.
+    """
+
+    name = models.CharField(
+        max_length=100, unique=True,
+        help_text='Directory name, e.g. imatch, mpower, bloomberg',
+    )
+    is_default = models.BooleanField(
+        default=False,
+        help_text='True for system defaults like imatch/mpower',
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='swift_directories',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name = 'SWIFT Directory'
+        verbose_name_plural = 'SWIFT Directories'
+
+    def __str__(self):
+        return self.name
+
+    def create_physical_dirs(self):
+        """Create the physical directory in all three environments."""
+        for env in SWIFT_ENVIRONMENTS:
+            os.makedirs(
+                os.path.join(settings.SFT_OUTBOUND_DIR, env, self.name),
+                exist_ok=True,
+            )
+
+
 class Package(models.Model):
     """ETL processing package — supports passthrough, convert, and transformation modes."""
 
@@ -518,6 +560,19 @@ class SwiftPackage(models.Model):
     batch_interval_minutes = models.IntegerField(
         default=30,
         help_text='Interval in minutes for batch processing (only used when processing_mode=batch)',
+    )
+    delivery_env = models.CharField(
+        max_length=10,
+        choices=[('dev', 'Development'), ('staging', 'Staging'), ('live', 'Live')],
+        default='dev',
+        help_text='Target environment for output delivery',
+    )
+    delivery_target = models.ForeignKey(
+        'SwiftDirectoryRegistry',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='swift_packages',
+        help_text='Delivery sub-directory (e.g. imatch, mpower)',
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

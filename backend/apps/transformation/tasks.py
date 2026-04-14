@@ -677,7 +677,31 @@ def process_swift_file(self, filepath, original_filename, swift_package_id=None)
                 'excel': excel_name,
             })
 
-        # 7. Create SwiftRunLog on success
+        # 7. Archive: copy original → archive/ori/ and output → archive/processed/
+        archive_ori = os.path.join(outbound_dir, 'archive', 'ori')
+        archive_proc = os.path.join(outbound_dir, 'archive', 'processed')
+        os.makedirs(archive_ori, exist_ok=True)
+        os.makedirs(archive_proc, exist_ok=True)
+        shutil.copy2(filepath, os.path.join(archive_ori, original_filename))
+        if results:
+            last_excel = results[-1]['excel']
+            last_excel_path = os.path.join(outbound_dir, last_excel)
+            if os.path.exists(last_excel_path):
+                shutil.copy2(last_excel_path, os.path.join(archive_proc, last_excel))
+
+        # 8. Deliver to environment target (e.g. sft_outbound/dev/imatch/)
+        if swift_package and swift_package.delivery_target:
+            env = swift_package.delivery_env or 'dev'
+            target_name = swift_package.delivery_target.name
+            delivery_path = os.path.join(outbound_dir, env, target_name)
+            os.makedirs(delivery_path, exist_ok=True)
+            if results:
+                last_excel = results[-1]['excel']
+                last_excel_path = os.path.join(outbound_dir, last_excel)
+                if os.path.exists(last_excel_path):
+                    shutil.copy2(last_excel_path, os.path.join(delivery_path, last_excel))
+
+        # 9. Create SwiftRunLog on success
         if swift_package:
             _register_swift_run_log(
                 swift_package=swift_package,
@@ -693,7 +717,7 @@ def process_swift_file(self, filepath, original_filename, swift_package_id=None)
             swift_package.status = SwiftPackage.Status.ACTIVE
             swift_package.save(update_fields=['status', 'updated_at'])
 
-        # 8. Remove source file
+        # 10. Remove source file
         if os.path.exists(filepath):
             os.remove(filepath)
 

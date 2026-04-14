@@ -1303,3 +1303,177 @@ class TestStatusControlEnforcement(TestCase):
         self.client.post(f'/api/transformation/packages/{pkg_id}/start/')
         detail = self.client.get(f'/api/transformation/packages/{pkg_id}/')
         self.assertEqual(detail.data['status'], 'active')
+
+
+# ─── SWIFT Directory Registry API Tests ───────────────────────────────
+
+@override_settings(
+    SFT_OUTBOUND_DIR=os.path.join(tempfile.mkdtemp(), 'sft_outbound'),
+)
+class TestSwiftDirectoryRegistryAPI(TestCase):
+    """Tests for the SwiftDirectoryRegistry API."""
+
+    def setUp(self):
+        from django.conf import settings
+        self.outbound = settings.SFT_OUTBOUND_DIR
+        os.makedirs(self.outbound, exist_ok=True)
+
+        self.user = User.objects.create_user(
+            username='swiftdir', email='swiftdir@etl.local', password='Test@12345',
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def test_list_swift_directories_empty(self):
+        resp = self.client.get('/api/transformation/swift-directories/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 0)
+
+    def test_create_swift_directory(self):
+        resp = self.client.post('/api/transformation/swift-directories/', {
+            'name': 'bloomberg',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['name'], 'bloomberg')
+
+    def test_create_swift_dir_physical_dirs(self):
+        """Creating a dir should create subdirs in all 3 environments."""
+        self.client.post('/api/transformation/swift-directories/', {
+            'name': 'reuters',
+        }, format='json')
+        for env in ['dev', 'staging', 'live']:
+            path = os.path.join(self.outbound, env, 'reuters')
+            self.assertTrue(os.path.isdir(path), f'{path} should exist')
+
+    def test_duplicate_name_rejected(self):
+        self.client.post('/api/transformation/swift-directories/', {'name': 'dup'}, format='json')
+        resp = self.client.post('/api/transformation/swift-directories/', {'name': 'dup'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_invalid_name_rejected(self):
+        resp = self.client.post('/api/transformation/swift-directories/', {
+            'name': 'bad name!!',
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_search_filter(self):
+        self.client.post('/api/transformation/swift-directories/', {'name': 'alpha'}, format='json')
+        self.client.post('/api/transformation/swift-directories/', {'name': 'beta'}, format='json')
+        resp = self.client.get('/api/transformation/swift-directories/?search=alp')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 1)
+        self.assertEqual(resp.data[0]['name'], 'alpha')
+
+
+# ─── SWIFT Package Delivery Tests ─────────────────────────────────────
+
+@override_settings(
+    SFT_OUTBOUND_DIR=os.path.join(tempfile.mkdtemp(), 'sft_outbound'),
+)
+class TestSwiftPackageDelivery(TestCase):
+    """Tests that SwiftPackage delivery_env and delivery_target work correctly."""
+
+    def setUp(self):
+        from apps.transformation.models import SwiftDirectoryRegistry
+        self.user = User.objects.create_user(
+            username='swiftdel', email='swiftdel@etl.local', password='Test@12345',
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+        self.target = SwiftDirectoryRegistry.objects.create(
+            name='imatch_test', is_default=False, created_by=self.user,
+        )
+
+    def test_create_swift_package_with_delivery(self):
+        resp = self.client.post('/api/transformation/swift-packages/', {
+            'name': 'Delivery Test',
+            'message_types': ['MT103'],
+            'output_format': 'xlsx',
+            'processing_mode': 'instant',
+            'file_pattern': '*.fin',
+            'delivery_env': 'staging',
+            'delivery_target': self.target.id,
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['delivery_env'], 'staging')
+
+    def test_default_delivery_env(self):
+        resp = self.client.post('/api/transformation/swift-packages/', {
+            'name': 'Default Env Test',
+            'message_types': ['ALL'],
+            'output_format': 'xlsx',
+            'processing_mode': 'instant',
+            'file_pattern': '*.*',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['delivery_env'], 'dev')
+
+    def test_delivery_target_assignment(self):
+        from apps.transformation.models import SwiftPackage
+        resp = self.client.post('/api/transformation/swift-packages/', {
+            'name': 'Target Test',
+            'message_types': ['MT541'],
+            'output_format': 'xlsx',
+            'processing_mode': 'instant',
+            'file_pattern': '*.fin',
+            'delivery_target': self.target.id,
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        pkg = SwiftPackage.objects.get(pk=resp.data['id'])
+        self.assertEqual(pkg.delivery_target_id, self.target.id)
+
+    def test_invalid_delivery_env(self):
+        resp = self.client.post('/api/transformation/swift-packages/', {
+            'name': 'Invalid Env',
+            'message_types': ['ALL'],
+            'output_format': 'xlsx',
+            'processing_mode': 'instant',
+            'file_pattern': '*.*',
+            'delivery_env': 'production',
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_delivery_target_nullable(self):
+        resp = self.client.post('/api/transformation/swift-packages/', {
+            'name': 'No Target',
+            'message_types': ['ALL'],
+            'output_format': 'xlsx',
+            'processing_mode': 'instant',
+            'file_pattern': '*.*',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertIsNone(resp.data.get('delivery_target'))
+
+
+# ─── SWIFT Archive Pipeline Tests ─────────────────────────────────────
+
+@override_settings(
+    SFT_INBOUND_DIR=os.path.join(tempfile.mkdtemp(), 'sft_inbound'),
+    SFT_OUTBOUND_DIR=os.path.join(tempfile.mkdtemp(), 'sft_outbound'),
+)
+class TestSwiftArchivePipeline(TestCase):
+    """Tests that archive/ori, archive/processed, and delivery dirs work."""
+
+    def setUp(self):
+        from django.conf import settings
+        self.inbound = settings.SFT_INBOUND_DIR
+        self.outbound = settings.SFT_OUTBOUND_DIR
+        os.makedirs(self.inbound, exist_ok=True)
+        os.makedirs(os.path.join(self.outbound, 'archive', 'ori'), exist_ok=True)
+        os.makedirs(os.path.join(self.outbound, 'archive', 'processed'), exist_ok=True)
+        os.makedirs(os.path.join(self.outbound, 'dev', 'imatch'), exist_ok=True)
+
+    def test_archive_ori_dir_exists(self):
+        """Archive ori directory should exist after setup."""
+        path = os.path.join(self.outbound, 'archive', 'ori')
+        self.assertTrue(os.path.isdir(path))
+
+    def test_archive_processed_dir_exists(self):
+        """Archive processed directory should exist after setup."""
+        path = os.path.join(self.outbound, 'archive', 'processed')
+        self.assertTrue(os.path.isdir(path))
+
+    def test_delivery_env_target_dir_exists(self):
+        """Delivery target directory should exist after setup."""
+        path = os.path.join(self.outbound, 'dev', 'imatch')
+        self.assertTrue(os.path.isdir(path))
