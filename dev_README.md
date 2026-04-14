@@ -1,6 +1,6 @@
 # ETL Platform — Developer Setup Guide
 
-> **Last Updated**: March 2026  
+> **Last Updated**: April 2026  
 > **Stack**: Django 5 · React 18 · PostgreSQL 16 · Redis 7 · Celery · Nginx · Docker
 
 ---
@@ -37,6 +37,7 @@ Wait ~30 seconds for all services to initialise. The backend auto-runs:
 - OAuth2 client setup
 - Celery Beat schedule setup (file sense scan every 30s)
 - UAT data seeding (users, sample data)
+- **Directory seeding** (default `imatch` and `mpower` delivery directories)
 
 ---
 
@@ -133,6 +134,46 @@ flowchart TB
 
 ---
 
+## File Processing Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                     MIRRORED DIRECTORY STRUCTURE                             │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  trfm_inbound/                     trfm_outbound/                           │
+│  ├── maybank/     ──(auto)──►      ├── maybank/                             │
+│  │   └── file.csv                  │   ├── ori/           ← original copy   │
+│  │                                 │   │   └── file.csv                     │
+│  ├── cimb/        ──(auto)──►      │   └── convert_transform/ ← processed  │
+│  │   └── data.xlsx                 │       └── mbb_14042026.xlsx            │
+│  └── (root)                        ├── cimb/                                │
+│                                    │   ├── ori/                             │
+│                                    │   └── convert_transform/               │
+│                                    ├── imatch/            ← delivery target │
+│                                    │   └── mbb_14042026.xlsx  (final copy)  │
+│                                    └── mpower/            ← delivery target │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+Processing Flow (per file):
+  1. File arrives:        trfm_inbound/<pool>/file.csv
+  2. Package picks up     → Passthrough / Convert / Transformation
+  3. Archive original:    trfm_outbound/<pool>/ori/file.csv
+  4. Archive processed:   trfm_outbound/<pool>/convert_transform/output.csv
+  5. Deliver to target:   trfm_outbound/imatch/output.csv
+  6. Delete inbound:      trfm_inbound/<pool>/file.csv (removed)
+```
+
+**Directory Types:**
+
+| Type | Created Dirs | Purpose |
+|------|-------------|----------|
+| **Pool** | `trfm_inbound/<name>/` + `trfm_outbound/<name>/ori/` + `trfm_outbound/<name>/convert_transform/` | Inbound monitoring + archiving |
+| **Delivery** | `trfm_outbound/<name>/` | Final output target (e.g. imatch, mpower) |
+
+---
+
 ## PostgreSQL Database Diagram
 
 ```mermaid
@@ -200,19 +241,32 @@ erDiagram
     Package {
         bigint id PK
         varchar name
+        varchar package_type "passthrough|convert|transformation"
+        varchar filename_mode "original|prefix"
         varchar file_pattern "Glob pattern e.g. MBB_*.csv"
-        bigint source_file_id FK
-        bigint canvas_file_id FK
+        bigint source_file_id FK "nullable - transformation only"
+        bigint canvas_file_id FK "nullable - transformation only"
+        bigint pool_directory_id FK "nullable - pool dir to monitor"
+        bigint delivery_directory_id FK "nullable - delivery target"
         varchar input_format "csv|xls|xlsx"
         varchar output_format "csv|xlsx"
         varchar output_prefix
         varchar batch_mode "instant|interval"
         int batch_interval_minutes
-        varchar status "draft|active|paused|stopped"
-        varchar mapping_status "unmapped|mapped|partial"
+        varchar status "inactive|active|running|paused"
+        varchar mapping_status "unmapped|mapped"
         bigint created_by_id FK
         datetime created_at
         datetime updated_at
+    }
+
+    DirectoryRegistry {
+        bigint id PK
+        varchar name UK "e.g. maybank, imatch"
+        varchar dir_type "pool|delivery"
+        boolean is_default "true for imatch/mpower"
+        bigint created_by_id FK
+        datetime created_at
     }
 
     SwiftPackage {
@@ -268,10 +322,13 @@ erDiagram
     User ||--o{ Notification : "receives"
     User ||--o{ UploadedFile : "uploads"
     User ||--o{ Package : "creates"
+    User ||--o{ DirectoryRegistry : "creates"
     Package ||--o{ FieldMapping : "has mappings"
     Package ||--o{ InboundFileLog : "has run logs"
     Package }o--|| UploadedFile : "source_file"
     Package }o--|| UploadedFile : "canvas_file"
+    Package }o--o| DirectoryRegistry : "pool_directory"
+    Package }o--o| DirectoryRegistry : "delivery_directory"
     InboundFileLog }o--o{ FileTag : "tagged with"
     SwiftPackage ||--o{ InboundFileLog : "processes"
 ```
@@ -284,9 +341,26 @@ erDiagram
 - Stat cards: Active Packages, Runs (7d), Rows Processed, Server Time, **Unprocessed Files**
 - Recent Activity feed (last 20 events) · Processing Summary panel
 
+### 📦 Package Types
+
+| Mode | Description | Source/Canvas Required | Format Fields |
+|------|-------------|:---------------------:|:-------------:|
+| **Passthrough** | Move files unchanged to delivery target | ❌ | ❌ |
+| **Passthrough & Convert** | Convert file format (CSV↔XLSX, XLS→CSV/XLSX) | ❌ | ✅ |
+| **Transformation** | Full field mapping with conditions/constants | ✅ | ✅ |
+
+**System Controls (Convert mode):**
+- ❌ Same-to-same conversion blocked (e.g. CSV→CSV)
+- ❌ Anything→XLS blocked (legacy format)
+- ✅ Valid: CSV↔XLSX, XLS→CSV, XLS→XLSX
+
+**Filename Modes:**
+- **Keep Original** — output uses the inbound filename (extension changes for Convert)
+- **Prefix + Timestamp** — generates `<prefix><ddmmyyyyhhmmss>.<ext>`
+
 ### 📦 Transformation Packages
 - CRUD for transformation packages · File pattern matching (glob: `MBB*.csv`)
-- Status lifecycle: Draft → Active → Paused → Stopped
+- Status lifecycle: Inactive → Active → Paused → Running
 - Run logs viewer and ad-hoc run trigger (🚀)
 
 ### 📨 SWIFT Packages
@@ -527,13 +601,18 @@ Shared across: `etl-backend`, `etl-celery-worker`, `etl-celery-beat`.
 
 The `file_sense_scan` task is **automatically registered** on startup (every 30 seconds).
 
-**A. Transformation Flow**
-1. Place a file in `./trfm_inbound/` matching a package's file pattern (e.g. `MBB*.csv`)
-2. Celery Beat identifies and matches it to an active Transformation Package
-3. Celery Worker applies field mappings (direct, conditional, constant)
-4. Output is written to `./trfm_outbound/`
-5. Inbound file saved to PostgreSQL, deleted from disk
-6. Run log recorded with status (`success`/`failed`)
+**A. Transformation / Passthrough / Convert Flow**
+1. Place a file in `./trfm_inbound/` (or a pool subdirectory) matching a package's file pattern
+2. Celery Beat identifies and matches it to an active Package
+3. Based on `package_type`:
+   - **Passthrough**: file is copied unchanged
+   - **Convert**: file is read and re-written in the target format
+   - **Transformation**: field mappings are applied (direct, conditional, constant)
+4. Original archived to `./trfm_outbound/<pool>/ori/`
+5. Processed archived to `./trfm_outbound/<pool>/convert_transform/`
+6. Final output delivered to `./trfm_outbound/<delivery>/` (e.g. imatch, mpower)
+7. Inbound file saved to PostgreSQL, deleted from disk
+8. Run log recorded with status (`success`/`failed`)
 
 **B. SWIFT Message Flow**
 1. Place a `.fin`, `.txt`, or `.xml` file in `./sft_inbound/`
@@ -572,8 +651,12 @@ docker exec etl-backend python manage.py createsuperuser
 docker exec etl-backend python manage.py seed_uat
 docker exec etl-backend python manage.py collectstatic --noinput
 
-# Run tests
+# Run tests (all / transformation)
+docker exec etl-backend python manage.py test --verbosity=2
 docker exec etl-backend python manage.py test apps.transformation -v2
+
+# Seed default directories (imatch, mpower)
+docker exec etl-backend python manage.py seed_directories
 
 # Access Django shell
 docker exec -it etl-backend python manage.py shell
@@ -600,18 +683,34 @@ ETL/
 │   │   ├── accounts/         # Authentication & user management
 │   │   ├── dashboard/        # Dashboard API
 │   │   └── transformation/   # Core ETL: packages, mappings, file processing
+│   │       ├── management/
+│   │       │   └── commands/
+│   │       │       └── seed_directories.py   # Seeds imatch/mpower defaults
+│   │       ├── models.py     # Package, DirectoryRegistry, FieldMapping, etc.
+│   │       ├── tasks.py      # Celery tasks (file_sense_scan, process_inbound_file)
+│   │       ├── serializers.py
+│   │       ├── views.py      # REST API views (Directory, Package, Upload, etc.)
+│   │       └── tests.py      # 116 unit tests
 │   ├── config/               # Django settings, URLs, Celery config
 │   └── manage.py
 ├── frontend/                 # React application (Vite)
 │   ├── src/
 │   │   ├── pages/            # Route pages (transformation, dashboard)
+│   │   │   └── transformation/
+│   │   │       ├── CreatePackagePage.jsx   # Package type selector + dir pickers
+│   │   │       ├── PackageListPage.jsx
+│   │   │       └── MappingPage.jsx
 │   │   ├── services/         # API client (axios)
 │   │   └── theme/            # Bloomberg dark theme
 │   └── vite.config.js
 ├── nginx/                    # Nginx reverse proxy config
 │   └── default.conf
-├── trfm_inbound/             # Source files for processing
-├── trfm_outbound/            # Processed output files
+├── trfm_inbound/             # Source files for processing (pool subdirs)
+├── trfm_outbound/            # Processed output files (pool archive + delivery)
+│   ├── imatch/               # Default delivery target
+│   └── mpower/               # Default delivery target
+├── sft_inbound/              # SWIFT inbound files
+├── sft_outbound/             # SWIFT output files
 ├── docker-compose.yml        # Container orchestration
 ├── Dockerfile.backend        # Python 3.12 image
 ├── Dockerfile.frontend       # Node 20 image
@@ -673,3 +772,194 @@ docker exec etl-nginx curl -s -X POST http://backend:8000/api/auth/login/ \
 > Django OAuth Toolkit automatically hashes the `client_secret` when saving via `.save()`.  
 > During Docker rebuild, the startup script may trigger this hashing unintentionally.  
 > The fix above forces the secret back to plain text using `.update()` which bypasses the hashing.
+
+---
+
+## 🔄 Server / Environment Migration Checklist
+
+When moving this project to a **new machine, server, or dev environment**, follow this checklist:
+
+### Prerequisites on New Machine
+
+| Tool | Min Version | Install |
+|------|-------------|----------|
+| Docker | 24+ | [docs.docker.com](https://docs.docker.com/engine/install/) |
+| Docker Compose | v2+ | Included with Docker Desktop |
+| Git | 2.30+ | `apt install git` or `brew install git` |
+
+### Step-by-Step Migration
+
+```bash
+# 1. Clone the repository
+git clone git@github.com-etl:capgenheim/ETL.git
+cd ETL
+
+# 2. Copy and configure environment
+cp .env.example .env
+# Edit .env with your new server settings (see below)
+
+# 3. Build and start all containers
+docker compose up -d --build
+
+# 4. Verify all 8 containers are healthy
+docker compose ps
+
+# 5. Verify tests pass
+docker exec etl-backend python manage.py test --verbosity=1
+```
+
+### `.env` Settings to Update
+
+| Setting | What to Change | Example |
+|---------|---------------|----------|
+| `SECRET_KEY` | Generate a new random key | `python3 -c "import secrets; print(secrets.token_urlsafe(50))"` |
+| `POSTGRES_PASSWORD` | Set a strong DB password | `MyStr0ng!Pass2026` |
+| `OAUTH2_CLIENT_SECRET` | Set a new client secret | `my-new-secret-key` |
+| `ALLOWED_HOSTS` | Add your server IP/domain | `localhost,192.168.1.50,etl.company.com` |
+| `CORS_ALLOWED_ORIGINS` | Add full URLs with protocol | `http://localhost:8080,http://etl.company.com` |
+| `NGINX_PORT` | If port 8080 is taken | `8080` (default) or any free port |
+| `DB_EXTERNAL_PORT` | If port 5433 is taken | `5433` or any free port |
+
+### SSH Key for Git
+
+If you need to push code from the new machine:
+
+```bash
+# 1. Generate a new SSH key
+ssh-keygen -t ed25519 -C "etl-platform" -f ~/.ssh/id_ed25519_etl
+
+# 2. Configure SSH to use this key for the ETL repo
+cat >> ~/.ssh/config << 'EOF'
+Host github.com-etl
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/id_ed25519_etl
+    IdentitiesOnly yes
+EOF
+
+# 3. Add the public key to GitHub
+cat ~/.ssh/id_ed25519_etl.pub
+# → Copy this output → GitHub → Settings → SSH Keys → Add New
+
+# 4. Test connection
+ssh -T git@github.com-etl
+```
+
+### Data Migration
+
+| Data | Location | How to Migrate |
+|------|----------|----------------|
+| **Database** | Docker volume `etl-postgres-data` | `pg_dump` / `pg_restore` (see below) |
+| **Inbound files** | `./trfm_inbound/` | Copy directory |
+| **Outbound files** | `./trfm_outbound/` | Copy directory (includes pool archives + delivery dirs) |
+| **SWIFT files** | `./sft_inbound/`, `./sft_outbound/` | Copy directories |
+| **Environment** | `.env` | Copy and update settings for new machine |
+
+**Database export/import:**
+
+```bash
+# On OLD server — export
+docker exec etl-db pg_dump -U etl_user -d etl_platform > etl_backup.sql
+
+# Transfer etl_backup.sql to new server...
+
+# On NEW server — import (after docker compose up)
+docker exec -i etl-db psql -U etl_user -d etl_platform < etl_backup.sql
+```
+
+### Directory Structure Auto-Creation
+
+On startup, the system automatically:
+1. Runs `seed_directories` → creates default `imatch` and `mpower` delivery directories
+2. Creates physical dirs: `trfm_outbound/imatch/` and `trfm_outbound/mpower/`
+3. Any previously registered pool directories will need their physical dirs re-created:
+
+```bash
+# Re-create all registered directory structures
+docker exec etl-backend python manage.py shell -c "
+from apps.transformation.models import DirectoryRegistry
+for d in DirectoryRegistry.objects.all():
+    d.create_physical_dirs()
+    print(f'  Created: {d.name} ({d.dir_type})')
+print('Done.')
+"
+```
+
+### Port Conflict Resolution
+
+If default ports conflict with other services on the new machine:
+
+```bash
+# Check what's using a port
+lsof -i :8080    # or: ss -tlnp | grep 8080
+
+# Update .env with free ports
+NGINX_PORT=9090         # App access: http://localhost:9090
+BACKEND_PORT=8091       # Django API
+DB_EXTERNAL_PORT=5434   # PostgreSQL
+REDIS_PORT=6380         # Redis
+MAILPIT_UI_PORT=8026    # Mailpit
+```
+
+### Verification After Migration
+
+```bash
+# 1. All 8 containers healthy
+docker compose ps
+
+# 2. All tests pass
+docker exec etl-backend python manage.py test --verbosity=1
+# Expected: 116 tests OK
+
+# 3. Login works
+curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/auth/login/
+# Expected: 405 (method not allowed = endpoint reachable)
+
+# 4. Default directories exist
+docker exec etl-backend python manage.py shell -c "
+from apps.transformation.models import DirectoryRegistry
+print(f'Directories: {DirectoryRegistry.objects.count()}')
+"
+
+# 5. File processing dirs exist
+ls -la ./trfm_outbound/imatch/ ./trfm_outbound/mpower/
+```
+
+---
+
+## API Reference
+
+### Directories API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/transformation/directories/` | List all directories (filter: `?type=pool\|delivery`) |
+| `POST` | `/api/transformation/directories/` | Create new directory (auto-creates physical dirs) |
+
+**POST body:**
+```json
+{ "name": "maybank", "dir_type": "pool" }
+```
+
+### Package API (Updated)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/transformation/packages/` | List packages (filter: `?status=active`) |
+| `POST` | `/api/transformation/packages/create/` | Create package (all 3 types) |
+| `GET/PUT/DELETE` | `/api/transformation/packages/<id>/` | Package detail |
+| `POST` | `/api/transformation/packages/<id>/start/` | Start package |
+| `POST` | `/api/transformation/packages/<id>/adhoc-run/` | Ad-hoc run |
+
+**Create Package body (passthrough example):**
+```json
+{
+    "name": "Bank Statement Import",
+    "package_type": "passthrough",
+    "filename_mode": "original",
+    "file_pattern": "MBB_*.csv",
+    "pool_directory": 1,
+    "delivery_directory": 2,
+    "batch_mode": "instant"
+}
+```
