@@ -75,6 +75,13 @@ const navItems = [
         icon: FolderOpenIcon,
         roles: ['user'],
         children: [
+            {
+                text: 'File Upload',
+                icon: UploadFileIcon,
+                children: [
+                    { text: 'Segregation Automation Engine', icon: CloudUploadIcon, path: '/file-manager/upload-segregation' },
+                ],
+            },
             { text: 'Source Files', icon: FolderOpenIcon, path: '/transformation/file-manager' },
             { text: 'Unprocessed Files', icon: InboxIcon, path: '/transformation/unprocessed-files' },
         ],

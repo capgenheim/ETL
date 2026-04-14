@@ -41,6 +41,8 @@ docker-data/
 # Transformation file processing dirs
 trfm_inbound/
 trfm_outbound/
+sft_inbound/
+sft_outbound/
 
 # SSL certificates (never commit private keys)
 certs/

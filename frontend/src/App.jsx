@@ -19,6 +19,7 @@ import AuditPage from './pages/AuditPage';
 import SwiftPage from './pages/SwiftPage';
 import SwiftParameterPage from './pages/SwiftParameterPage';
 import SwiftPackagePage from './pages/SwiftPackagePage';
+import UploadSegregationPage from './pages/transformation/UploadSegregationPage';
 import ErrorPage from './pages/ErrorPage';
 
 function App() {
@@ -53,6 +54,7 @@ function App() {
                                 <Route path="/transformation/packages/:id/edit" element={<CreatePackagePage />} />
 
                                 {/* File Manager */}
+                                <Route path="/file-manager/upload-segregation" element={<UploadSegregationPage />} />
                                 <Route path="/transformation/file-manager" element={<FileManagerPage />} />
                                 <Route path="/transformation/unprocessed-files" element={<UnprocessedFilesPage />} />
 
