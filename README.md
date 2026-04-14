@@ -278,9 +278,19 @@ erDiagram
         varchar processing_mode "instant|batch"
         int batch_interval_minutes
         varchar file_pattern "Glob pattern e.g. *.fin, *.xml"
+        varchar delivery_env "dev|staging|live"
+        bigint delivery_target_id FK "nullable"
         varchar status "active|inactive"
         datetime created_at
         datetime updated_at
+    }
+
+    SwiftDirectoryRegistry {
+        bigint id PK
+        varchar name UK "e.g. imatch, mpower, bloomberg"
+        boolean is_default "true for imatch/mpower"
+        bigint created_by_id FK
+        datetime created_at
     }
 
     FieldMapping {
@@ -331,6 +341,7 @@ erDiagram
     Package }o--o| DirectoryRegistry : "delivery_directory"
     InboundFileLog }o--o{ FileTag : "tagged with"
     SwiftPackage ||--o{ InboundFileLog : "processes"
+    SwiftPackage }o--o| SwiftDirectoryRegistry : "delivery_target"
 ```
 
 ---
@@ -619,7 +630,35 @@ The `file_sense_scan` task is **automatically registered** on startup (every 30 
 2. Celery Beat delegates to the MX/MT parser
 3. Configured `SwiftPackage` rules are applied (`message_types`, `batch_interval_minutes`)
 4. Unpacked messages are enriched into the DB and exported to requested `output_format`
-5. Daily grouped logs available inside File Manager under Source files
+5. **Archive**: original file → `sft_outbound/archive/ori/`, processed output → `sft_outbound/archive/processed/`
+6. **Delivery**: output file → `sft_outbound/<env>/<target>/` (e.g. `dev/imatch/`)
+7. Daily grouped logs available inside File Manager under Source files
+
+### SWIFT Outbound Directory Structure
+
+```
+sft_outbound/
+├── archive/                     ← auto-created on boot
+│   ├── ori/                     ← original inbound file copy
+│   └── processed/               ← generated output file copy
+├── dev/                         ← environment (default)
+│   ├── imatch/                  ← default delivery target
+│   ├── mpower/                  ← default delivery target
+│   └── <user-created>/          ← e.g. bloomberg
+├── staging/
+│   ├── imatch/
+│   ├── mpower/
+│   └── <user-created>/
+└── live/
+    ├── imatch/
+    ├── mpower/
+    └── <user-created>/
+```
+
+**Key Points:**
+- Each `SwiftPackage` has a `delivery_env` (dev/staging/live) and `delivery_target` (e.g. imatch)
+- Archive always receives a copy regardless of delivery configuration
+- New delivery targets can be added via API or Admin — automatically created in all 3 environments
 
 ### Run Logs & Ad-hoc Run
 
@@ -655,8 +694,11 @@ docker exec etl-backend python manage.py collectstatic --noinput
 docker exec etl-backend python manage.py test --verbosity=2
 docker exec etl-backend python manage.py test apps.transformation -v2
 
-# Seed default directories (imatch, mpower)
+# Seed default directories (transformation + SWIFT)
 docker exec etl-backend python manage.py seed_directories
+# Creates: trfm_outbound/imatch, mpower
+# Creates: sft_outbound/archive/ori, archive/processed
+# Creates: sft_outbound/dev|staging|live/imatch, mpower
 
 # Access Django shell
 docker exec -it etl-backend python manage.py shell
@@ -686,11 +728,11 @@ ETL/
 │   │       ├── management/
 │   │       │   └── commands/
 │   │       │       └── seed_directories.py   # Seeds imatch/mpower defaults
-│   │       ├── models.py     # Package, DirectoryRegistry, FieldMapping, etc.
-│   │       ├── tasks.py      # Celery tasks (file_sense_scan, process_inbound_file)
+│   │       ├── models.py     # Package, DirectoryRegistry, SwiftDirectoryRegistry, etc.
+│   │       ├── tasks.py      # Celery tasks (file_sense_scan, process_inbound_file, process_swift_file)
 │   │       ├── serializers.py
-│   │       ├── views.py      # REST API views (Directory, Package, Upload, etc.)
-│   │       └── tests.py      # 116 unit tests
+│   │       ├── views.py      # REST API views (Directory, SwiftDirectory, Package, Upload, etc.)
+│   │       └── tests.py      # 145 unit tests
 │   ├── config/               # Django settings, URLs, Celery config
 │   └── manage.py
 ├── frontend/                 # React application (Vite)
@@ -711,11 +753,23 @@ ETL/
 │   └── mpower/               # Default delivery target
 ├── sft_inbound/              # SWIFT inbound files
 ├── sft_outbound/             # SWIFT output files
+│   ├── archive/              # Archive (ori + processed)
+│   │   ├── ori/              # Original inbound copies
+│   │   └── processed/        # Generated output copies
+│   ├── dev/                  # Development delivery
+│   │   ├── imatch/           # Default target
+│   │   └── mpower/           # Default target
+│   ├── staging/              # Staging delivery
+│   │   ├── imatch/
+│   │   └── mpower/
+│   └── live/                 # Production delivery
+│       ├── imatch/
+│       └── mpower/
 ├── docker-compose.yml        # Container orchestration
 ├── Dockerfile.backend        # Python 3.12 image
 ├── Dockerfile.frontend       # Node 20 image
 ├── .env.example              # Environment template
-└── dev_README.md             # ← This file
+└── README.md                 # ← This file
 ```
 
 ---
@@ -870,17 +924,21 @@ docker exec -i etl-db psql -U etl_user -d etl_platform < etl_backup.sql
 ### Directory Structure Auto-Creation
 
 On startup, the system automatically:
-1. Runs `seed_directories` → creates default `imatch` and `mpower` delivery directories
-2. Creates physical dirs: `trfm_outbound/imatch/` and `trfm_outbound/mpower/`
-3. Any previously registered pool directories will need their physical dirs re-created:
+1. Runs `seed_directories` → creates defaults for both transformation and SWIFT
+2. **Transformation**: `trfm_outbound/imatch/`, `trfm_outbound/mpower/`
+3. **SWIFT**: `sft_outbound/archive/ori/`, `archive/processed/`, `dev|staging|live/imatch/`, `dev|staging|live/mpower/`
+4. Any previously registered pool/SWIFT directories will need their physical dirs re-created:
 
 ```bash
 # Re-create all registered directory structures
 docker exec etl-backend python manage.py shell -c "
-from apps.transformation.models import DirectoryRegistry
+from apps.transformation.models import DirectoryRegistry, SwiftDirectoryRegistry
 for d in DirectoryRegistry.objects.all():
     d.create_physical_dirs()
     print(f'  Created: {d.name} ({d.dir_type})')
+for s in SwiftDirectoryRegistry.objects.all():
+    s.create_physical_dirs()
+    print(f'  Created: {s.name} (swift - all envs)')
 print('Done.')
 "
 ```
@@ -909,7 +967,7 @@ docker compose ps
 
 # 2. All tests pass
 docker exec etl-backend python manage.py test --verbosity=1
-# Expected: 116 tests OK
+# Expected: 145 tests OK
 
 # 3. Login works
 curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/auth/login/
@@ -923,6 +981,7 @@ print(f'Directories: {DirectoryRegistry.objects.count()}')
 
 # 5. File processing dirs exist
 ls -la ./trfm_outbound/imatch/ ./trfm_outbound/mpower/
+ls -la ./sft_outbound/archive/ori/ ./sft_outbound/dev/imatch/
 ```
 
 ---
@@ -941,6 +1000,18 @@ ls -la ./trfm_outbound/imatch/ ./trfm_outbound/mpower/
 { "name": "maybank", "dir_type": "pool" }
 ```
 
+### SWIFT Directories API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/transformation/swift-directories/` | List SWIFT delivery targets (filter: `?search=`) |
+| `POST` | `/api/transformation/swift-directories/` | Create new target (auto-creates in all 3 envs) |
+
+**POST body:**
+```json
+{ "name": "bloomberg" }
+```
+
 ### Package API (Updated)
 
 | Method | Path | Description |
@@ -950,6 +1021,29 @@ ls -la ./trfm_outbound/imatch/ ./trfm_outbound/mpower/
 | `GET/PUT/DELETE` | `/api/transformation/packages/<id>/` | Package detail |
 | `POST` | `/api/transformation/packages/<id>/start/` | Start package |
 | `POST` | `/api/transformation/packages/<id>/adhoc-run/` | Ad-hoc run |
+
+### SWIFT Package API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET/POST` | `/api/transformation/swift-packages/` | List/Create SWIFT packages |
+| `GET/PUT/DELETE` | `/api/transformation/swift-packages/<id>/` | SWIFT package detail |
+| `POST` | `/api/transformation/swift-packages/<id>/start/` | Start SWIFT package |
+| `GET` | `/api/transformation/swift-packages/<id>/run-logs/` | Run logs (7 days) |
+| `GET` | `/api/transformation/swift-packages/types/` | Available MT/MX types |
+
+**Create SWIFT Package body:**
+```json
+{
+    "name": "MT Processing",
+    "message_types": ["MT103", "MT541"],
+    "output_format": "xlsx",
+    "processing_mode": "instant",
+    "file_pattern": "*.fin",
+    "delivery_env": "dev",
+    "delivery_target": 1
+}
+```
 
 **Create Package body (passthrough example):**
 ```json
