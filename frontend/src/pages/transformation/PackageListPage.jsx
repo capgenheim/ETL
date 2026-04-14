@@ -376,7 +376,11 @@ function ActionButtons({ pkg, onAction, onEdit, onMap, onAdhocRun, onOpenLogs })
                     <IconButton
                         size="small"
                         sx={btnSx(palette.success)}
-                        disabled={pkg.status === 'active' || pkg.status === 'running' || pkg.mapping_status === 'unmapped'}
+                        disabled={
+                            pkg.status === 'active' || 
+                            pkg.status === 'running' || 
+                            (pkg.package_type === 'transformation' && pkg.mapping_status === 'unmapped')
+                        }
                         onClick={() => onAction(pkg.id, 'start')}
                     >
                         <PlayIcon sx={{ fontSize: 18 }} />
@@ -407,15 +411,17 @@ function ActionButtons({ pkg, onAction, onEdit, onMap, onAdhocRun, onOpenLogs })
                     </IconButton>
                 </span>
             </Tooltip>
-            <Tooltip title={pkg.mapping_status === 'unmapped' ? 'Map Fields' : 'Edit Mapping'}>
-                <IconButton
-                    size="small"
-                    sx={btnSx(palette.info)}
-                    onClick={() => onMap(pkg.id)}
-                >
-                    <MapIcon sx={{ fontSize: 18 }} />
-                </IconButton>
-            </Tooltip>
+            {pkg.package_type === 'transformation' && (
+                <Tooltip title={pkg.mapping_status === 'unmapped' ? 'Map Fields' : 'Edit Mapping'}>
+                    <IconButton
+                        size="small"
+                        sx={btnSx(palette.info)}
+                        onClick={() => onMap(pkg.id)}
+                    >
+                        <MapIcon sx={{ fontSize: 18 }} />
+                    </IconButton>
+                </Tooltip>
+            )}
             <Tooltip title="Edit Package">
                 <IconButton
                     size="small"
@@ -436,7 +442,7 @@ function ActionButtons({ pkg, onAction, onEdit, onMap, onAdhocRun, onOpenLogs })
                                 backgroundColor: alpha('#c586c0', 0.1),
                             },
                         }}
-                        disabled={pkg.mapping_status === 'unmapped'}
+                        disabled={pkg.package_type === 'transformation' && pkg.mapping_status === 'unmapped'}
                         onClick={() => onAdhocRun(pkg.id, pkg.name)}
                     >
                         <AdhocIcon sx={{ fontSize: 18 }} />
@@ -557,7 +563,22 @@ function PackageRow({ pkg, index, onAction, onEdit, onMap, onAdhocRun, onOpenLog
             <StatusChip status={pkg.status} />
 
             {/* Mapping */}
-            <MappingChip mappingStatus={pkg.mapping_status} />
+            {pkg.package_type === 'transformation' ? (
+                <MappingChip mappingStatus={pkg.mapping_status} />
+            ) : (
+                <Chip
+                    label="Not Required"
+                    size="small"
+                    sx={{
+                        height: 22,
+                        fontSize: '0.65rem',
+                        fontWeight: 700,
+                        fontFamily: '"JetBrains Mono", monospace',
+                        backgroundColor: alpha(palette.textDisabled, 0.1),
+                        color: palette.textDisabled,
+                    }}
+                />
+            )}
 
             {/* Run Log Badge */}
             <Box sx={{ display: 'flex', justifyContent: 'center' }}>

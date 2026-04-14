@@ -199,6 +199,12 @@ class PackageStatusView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        if action == 'start' and package.package_type == 'transformation' and package.mapping_status != Package.MappingStatus.MAPPED:
+            return Response(
+                {'error': 'Transformation packages must be mapped before starting'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         package.status = self.VALID_ACTIONS[action]
         package.save(update_fields=['status', 'updated_at'])
         return Response(PackageSerializer(package).data)
@@ -281,9 +287,9 @@ class AdHocRunView(APIView):
         except Package.DoesNotExist:
             return Response({'error': 'Package not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        if package.mapping_status != Package.MappingStatus.MAPPED:
+        if package.package_type == 'transformation' and package.mapping_status != Package.MappingStatus.MAPPED:
             return Response(
-                {'error': 'Package must be mapped before running'},
+                {'error': 'Transformation packages must be mapped before running'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

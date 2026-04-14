@@ -430,14 +430,14 @@ class TestPackageCRUDAPI(TestCase):
     # ── Status Control ──
 
     def test_start_package(self):
-        create_resp = self._create_package()
+        create_resp = self._create_package(package_type='passthrough', source_file=None, canvas_file=None)
         pkg_id = create_resp.data['id']
         resp = self.client.post(f'/api/transformation/packages/{pkg_id}/start/')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data['status'], 'active')
 
     def test_pause_package(self):
-        create_resp = self._create_package()
+        create_resp = self._create_package(package_type='passthrough', source_file=None, canvas_file=None)
         pkg_id = create_resp.data['id']
         # Start first
         self.client.post(f'/api/transformation/packages/{pkg_id}/start/')
@@ -446,7 +446,7 @@ class TestPackageCRUDAPI(TestCase):
         self.assertEqual(resp.data['status'], 'paused')
 
     def test_stop_package(self):
-        create_resp = self._create_package()
+        create_resp = self._create_package(package_type='passthrough', source_file=None, canvas_file=None)
         pkg_id = create_resp.data['id']
         self.client.post(f'/api/transformation/packages/{pkg_id}/start/')
         resp = self.client.post(f'/api/transformation/packages/{pkg_id}/stop/')
