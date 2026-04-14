@@ -1022,3 +1022,284 @@ class TestDirectoryRouting(TestCase):
         self.assertEqual(resp.data['pool_directory_name'], 'bankpool')
         self.assertEqual(resp.data['delivery_directory_name'], 'imatch')
 
+
+# ─── File Conversion Pipeline Tests ───────────────────────────────────
+
+@override_settings(
+    TRFM_INBOUND_DIR=os.path.join(tempfile.mkdtemp(), 'trfm_inbound'),
+    TRFM_OUTBOUND_DIR=os.path.join(tempfile.mkdtemp(), 'trfm_outbound'),
+)
+class TestFileConversionPipeline(TestCase):
+    """Tests that _read_file and _write_file correctly convert between formats."""
+
+    def setUp(self):
+        from django.conf import settings
+        self.inbound = settings.TRFM_INBOUND_DIR
+        self.outbound = settings.TRFM_OUTBOUND_DIR
+        os.makedirs(self.inbound, exist_ok=True)
+        os.makedirs(self.outbound, exist_ok=True)
+
+    def _create_csv_file(self, name='test.csv'):
+        filepath = os.path.join(self.inbound, name)
+        with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+            writer.writerow(['Name', 'Amount', 'Date'])
+            writer.writerow(['Alice', '1000', '2026-01-01'])
+            writer.writerow(['Bob', '2000', '2026-02-15'])
+        return filepath
+
+    def _create_xlsx_file(self, name='test.xlsx'):
+        filepath = os.path.join(self.inbound, name)
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(['Name', 'Amount', 'Date'])
+        ws.append(['Charlie', 3000, '2026-03-01'])
+        ws.append(['Diana', 4000, '2026-04-10'])
+        wb.save(filepath)
+        return filepath
+
+    def _create_xls_file(self, name='test.xls'):
+        """Create a real .xls file using xlwt."""
+        import xlwt
+        filepath = os.path.join(self.inbound, name)
+        wb = xlwt.Workbook()
+        ws = wb.add_sheet('Sheet1')
+        headers = ['Name', 'Amount', 'Date']
+        for c, h in enumerate(headers):
+            ws.write(0, c, h)
+        ws.write(1, 0, 'Eve')
+        ws.write(1, 1, 5000.0)
+        ws.write(1, 2, '2026-05-20')
+        ws.write(2, 0, 'Frank')
+        ws.write(2, 1, 6000.0)
+        ws.write(2, 2, '2026-06-25')
+        wb.save(filepath)
+        return filepath
+
+    # ── _read_file tests ──
+
+    def test_read_csv_file(self):
+        from apps.transformation.tasks import _read_file
+        fp = self._create_csv_file()
+        data = _read_file(fp, 'test.csv')
+        self.assertEqual(len(data), 2)
+        self.assertEqual(data[0]['Name'], 'Alice')
+        self.assertEqual(data[1]['Amount'], '2000')
+
+    def test_read_xlsx_file(self):
+        from apps.transformation.tasks import _read_file
+        fp = self._create_xlsx_file()
+        data = _read_file(fp, 'test.xlsx')
+        self.assertEqual(len(data), 2)
+        self.assertEqual(data[0]['Name'], 'Charlie')
+        self.assertEqual(data[1]['Amount'], 4000)
+
+    def test_read_xls_file(self):
+        from apps.transformation.tasks import _read_file
+        fp = self._create_xls_file()
+        data = _read_file(fp, 'test.xls')
+        self.assertEqual(len(data), 2)
+        self.assertEqual(data[0]['Name'], 'Eve')
+        self.assertEqual(data[0]['Amount'], 5000.0)
+        self.assertEqual(data[1]['Name'], 'Frank')
+        self.assertEqual(data[1]['Amount'], 6000.0)
+
+    # ── _write_file tests ──
+
+    def test_write_csv(self):
+        from apps.transformation.tasks import _write_file
+        out = os.path.join(self.outbound, 'output.csv')
+        data = [['Name', 'Value'], ['Test', '100']]
+        _write_file(out, data, 'csv')
+        self.assertTrue(os.path.exists(out))
+        with open(out, 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+        self.assertEqual(rows[0], ['Name', 'Value'])
+        self.assertEqual(rows[1], ['Test', '100'])
+
+    def test_write_xlsx(self):
+        from apps.transformation.tasks import _write_file
+        out = os.path.join(self.outbound, 'output.xlsx')
+        data = [['Name', 'Value'], ['Test', 100]]
+        _write_file(out, data, 'xlsx')
+        self.assertTrue(os.path.exists(out))
+        wb = openpyxl.load_workbook(out)
+        ws = wb.active
+        self.assertEqual(ws.cell(1, 1).value, 'Name')
+        self.assertEqual(ws.cell(2, 2).value, 100)
+        wb.close()
+
+    # ── End-to-end conversion path tests ──
+
+    def test_xls_to_csv_conversion(self):
+        """XLS → CSV: read XLS, write CSV, verify CSV content."""
+        from apps.transformation.tasks import _read_file, _write_file
+        fp = self._create_xls_file()
+        data = _read_file(fp, 'test.xls')
+        headers = list(data[0].keys())
+        output_data = [headers] + [[row.get(h, '') for h in headers] for row in data]
+        out = os.path.join(self.outbound, 'converted.csv')
+        _write_file(out, output_data, 'csv')
+        self.assertTrue(os.path.exists(out))
+        with open(out, 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+        self.assertEqual(rows[0], ['Name', 'Amount', 'Date'])
+        self.assertEqual(rows[1][0], 'Eve')
+        self.assertEqual(len(rows), 3)  # header + 2 data rows
+
+    def test_xls_to_xlsx_conversion(self):
+        """XLS → XLSX: read XLS, write XLSX, verify XLSX content."""
+        from apps.transformation.tasks import _read_file, _write_file
+        fp = self._create_xls_file()
+        data = _read_file(fp, 'test.xls')
+        headers = list(data[0].keys())
+        output_data = [headers] + [[row.get(h, '') for h in headers] for row in data]
+        out = os.path.join(self.outbound, 'converted.xlsx')
+        _write_file(out, output_data, 'xlsx')
+        self.assertTrue(os.path.exists(out))
+        wb = openpyxl.load_workbook(out)
+        ws = wb.active
+        self.assertEqual(ws.cell(1, 1).value, 'Name')
+        self.assertEqual(ws.cell(2, 1).value, 'Eve')
+        self.assertEqual(ws.cell(3, 1).value, 'Frank')
+        wb.close()
+
+    def test_csv_to_xlsx_conversion(self):
+        """CSV → XLSX: read CSV, write XLSX, verify XLSX content."""
+        from apps.transformation.tasks import _read_file, _write_file
+        fp = self._create_csv_file()
+        data = _read_file(fp, 'test.csv')
+        headers = list(data[0].keys())
+        output_data = [headers] + [[row.get(h, '') for h in headers] for row in data]
+        out = os.path.join(self.outbound, 'converted.xlsx')
+        _write_file(out, output_data, 'xlsx')
+        self.assertTrue(os.path.exists(out))
+        wb = openpyxl.load_workbook(out)
+        ws = wb.active
+        self.assertEqual(ws.cell(1, 1).value, 'Name')
+        self.assertEqual(ws.cell(2, 1).value, 'Alice')
+        wb.close()
+
+    def test_xlsx_to_csv_conversion(self):
+        """XLSX → CSV: read XLSX, write CSV, verify CSV content."""
+        from apps.transformation.tasks import _read_file, _write_file
+        fp = self._create_xlsx_file()
+        data = _read_file(fp, 'test.xlsx')
+        headers = list(data[0].keys())
+        output_data = [headers] + [[row.get(h, '') for h in headers] for row in data]
+        out = os.path.join(self.outbound, 'converted.csv')
+        _write_file(out, output_data, 'csv')
+        self.assertTrue(os.path.exists(out))
+        with open(out, 'r', encoding='utf-8-sig') as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+        self.assertEqual(rows[0], ['Name', 'Amount', 'Date'])
+        self.assertEqual(rows[1][0], 'Charlie')
+
+
+# ─── Status Control Enforcement Tests ─────────────────────────────────
+
+class TestStatusControlEnforcement(TestCase):
+    """Tests that mapping constraints differ by package_type."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='enforce', email='enforce@example.com', password='Test@12345',
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+        self.source = UploadedFile.objects.create(
+            file_type='source', original_filename='s.csv', file_format='csv',
+            headers_json=['A', 'B'], field_count=2, uploaded_by=self.user,
+        )
+        self.canvas = UploadedFile.objects.create(
+            file_type='canvas', original_filename='c.csv', file_format='csv',
+            headers_json=['X', 'Y'], field_count=2, uploaded_by=self.user,
+        )
+
+    def test_transformation_unmapped_cannot_start(self):
+        """Transformation package without mappings must be blocked from starting."""
+        resp = self.client.post('/api/transformation/packages/create/', {
+            'name': 'Blocked Trfm', 'file_pattern': '*.csv',
+            'package_type': 'transformation', 'filename_mode': 'prefix',
+            'source_file': self.source.id, 'canvas_file': self.canvas.id,
+            'input_format': 'csv', 'output_format': 'csv',
+            'output_prefix': 'test_', 'batch_mode': 'instant',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        pkg_id = resp.data['id']
+        start_resp = self.client.post(f'/api/transformation/packages/{pkg_id}/start/')
+        self.assertEqual(start_resp.status_code, 400)
+        self.assertIn('mapped', start_resp.data['error'].lower())
+
+    def test_passthrough_unmapped_can_start(self):
+        """Passthrough package can start without mapping."""
+        resp = self.client.post('/api/transformation/packages/create/', {
+            'name': 'Free Passthrough', 'file_pattern': '*.csv',
+            'package_type': 'passthrough', 'filename_mode': 'original',
+            'input_format': 'csv', 'output_format': 'csv',
+            'batch_mode': 'instant',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        pkg_id = resp.data['id']
+        start_resp = self.client.post(f'/api/transformation/packages/{pkg_id}/start/')
+        self.assertEqual(start_resp.status_code, 200)
+        self.assertEqual(start_resp.data['status'], 'active')
+
+    def test_convert_unmapped_can_start(self):
+        """Convert package can start without mapping."""
+        resp = self.client.post('/api/transformation/packages/create/', {
+            'name': 'Free Convert', 'file_pattern': '*.xls',
+            'package_type': 'convert', 'filename_mode': 'prefix',
+            'input_format': 'xls', 'output_format': 'xlsx',
+            'output_prefix': 'conv_', 'batch_mode': 'instant',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        pkg_id = resp.data['id']
+        start_resp = self.client.post(f'/api/transformation/packages/{pkg_id}/start/')
+        self.assertEqual(start_resp.status_code, 200)
+        self.assertEqual(start_resp.data['status'], 'active')
+
+    def test_passthrough_can_adhoc_run(self):
+        """Passthrough should not be blocked from ad-hoc run (no matching required)."""
+        resp = self.client.post('/api/transformation/packages/create/', {
+            'name': 'Adhoc PT', 'file_pattern': '*.csv',
+            'package_type': 'passthrough', 'filename_mode': 'original',
+            'input_format': 'csv', 'output_format': 'csv',
+            'batch_mode': 'instant',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        pkg_id = resp.data['id']
+        # Ad-hoc should NOT return 400 (may return 200 with "no files found")
+        adhoc_resp = self.client.post(f'/api/transformation/packages/{pkg_id}/adhoc-run/')
+        self.assertNotEqual(adhoc_resp.status_code, 400)
+
+    def test_transformation_unmapped_adhoc_blocked(self):
+        """Unmapped transformation package must be blocked from ad-hoc run."""
+        resp = self.client.post('/api/transformation/packages/create/', {
+            'name': 'Block Adhoc', 'file_pattern': '*.csv',
+            'package_type': 'transformation', 'filename_mode': 'prefix',
+            'source_file': self.source.id, 'canvas_file': self.canvas.id,
+            'input_format': 'csv', 'output_format': 'csv',
+            'output_prefix': 'test_', 'batch_mode': 'instant',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        pkg_id = resp.data['id']
+        adhoc_resp = self.client.post(f'/api/transformation/packages/{pkg_id}/adhoc-run/')
+        self.assertEqual(adhoc_resp.status_code, 400)
+
+    def test_edit_guard_active_package(self):
+        """Active passthrough package should block edit (via frontend guard — test status field)."""
+        from apps.transformation.models import Package
+        resp = self.client.post('/api/transformation/packages/create/', {
+            'name': 'Guard Test', 'file_pattern': '*.csv',
+            'package_type': 'passthrough', 'filename_mode': 'original',
+            'input_format': 'csv', 'output_format': 'csv',
+            'batch_mode': 'instant',
+        }, format='json')
+        pkg_id = resp.data['id']
+        self.client.post(f'/api/transformation/packages/{pkg_id}/start/')
+        detail = self.client.get(f'/api/transformation/packages/{pkg_id}/')
+        self.assertEqual(detail.data['status'], 'active')
