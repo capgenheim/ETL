@@ -226,6 +226,11 @@ UNFOLD = {
                 "icon": "folder_open",
                 "items": [
                     {
+                        "title": "Directories",
+                        "icon": "folder_special",
+                        "link": "/admin/transformation/directoryregistry/",
+                    },
+                    {
                         "title": "File Tags",
                         "icon": "tag",
                         "link": "/admin/transformation/filetag/",

@@ -22,53 +22,112 @@ from django.utils import timezone
 def file_sense_scan():
     """
     Scan trfm_inbound directory for files matching active package patterns.
+    Resolves pool_directory per package for subdirectory monitoring.
     For each match, dispatch process_inbound_file task.
     """
     from .models import Package
 
-    inbound_dir = settings.TRFM_INBOUND_DIR
+    base_inbound = settings.TRFM_INBOUND_DIR
 
-    if not os.path.exists(inbound_dir):
+    if not os.path.exists(base_inbound):
         return {'scanned': 0, 'matched': 0}
 
-    files = [f for f in os.listdir(inbound_dir) if os.path.isfile(os.path.join(inbound_dir, f))]
-    if not files:
-        return {'scanned': 0, 'matched': 0}
-
-    # Get all active/running packages with mappings
+    # Get all active/running packages with mappings (for transformation)
+    # or any active passthrough/convert packages
     active_packages = Package.objects.filter(
         status__in=[Package.Status.ACTIVE, Package.Status.RUNNING],
-        mapping_status=Package.MappingStatus.MAPPED,
-    ).select_related('source_file', 'canvas_file')
+    ).select_related('source_file', 'canvas_file', 'pool_directory', 'delivery_directory')
+
+    # Only transformation packages need mapping
+    active_packages = [
+        p for p in active_packages
+        if p.package_type in ('passthrough', 'convert')
+        or (p.package_type == 'transformation' and p.mapping_status == Package.MappingStatus.MAPPED)
+    ]
 
     matched = 0
-    for filename in files:
-        for package in active_packages:
+    for package in active_packages:
+        # Resolve inbound directory per package
+        if package.pool_directory:
+            inbound_dir = os.path.join(base_inbound, package.pool_directory.name)
+        else:
+            inbound_dir = base_inbound
+
+        if not os.path.exists(inbound_dir):
+            continue
+
+        files = [f for f in os.listdir(inbound_dir) if os.path.isfile(os.path.join(inbound_dir, f))]
+        for filename in files:
             if fnmatch.fnmatch(filename.lower(), package.file_pattern.lower()):
-                # Dispatch processing task
                 filepath = os.path.join(inbound_dir, filename)
                 process_inbound_file.delay(package.id, filepath, filename, 'instant')
                 matched += 1
-                break  # One file matches one package
 
-    return {'scanned': len(files), 'matched': matched}
+    return {'scanned': 'multi-dir', 'matched': matched}
+
+
+def _resolve_output_filename(package, original_filename):
+    """Determine output filename based on package filename_mode."""
+    if package.filename_mode == 'original':
+        if package.package_type == 'passthrough':
+            return original_filename  # Keep exact original for passthrough
+        # For convert/transformation: keep base name, change extension
+        base = os.path.splitext(original_filename)[0]
+        return f'{base}.{package.output_format}'
+    else:
+        # Prefix + timestamp
+        timestamp = timezone.localtime().strftime('%d%m%Y%H%M%S')
+        ext = package.output_format
+        if package.package_type == 'passthrough' and package.filename_mode == 'prefix':
+            ext = os.path.splitext(original_filename)[1].lstrip('.') or 'csv'
+        return f'{package.output_prefix}{timestamp}.{ext}'
+
+
+def _resolve_dirs(package):
+    """Resolve archive (ori, convert_transform) and delivery directories."""
+    base_outbound = settings.TRFM_OUTBOUND_DIR
+
+    if package.pool_directory:
+        pool_name = package.pool_directory.name
+    else:
+        pool_name = '_root'
+
+    ori_dir = os.path.join(base_outbound, pool_name, 'ori')
+    ct_dir = os.path.join(base_outbound, pool_name, 'convert_transform')
+
+    if package.delivery_directory:
+        delivery_dir = os.path.join(base_outbound, package.delivery_directory.name)
+    else:
+        delivery_dir = base_outbound
+
+    # Ensure all dirs exist
+    os.makedirs(ori_dir, exist_ok=True)
+    os.makedirs(ct_dir, exist_ok=True)
+    os.makedirs(delivery_dir, exist_ok=True)
+
+    return ori_dir, ct_dir, delivery_dir
 
 
 @shared_task(name='transformation.process_inbound_file', bind=True, max_retries=3)
 def process_inbound_file(self, package_id, filepath, original_filename, run_type='instant'):
     """
-    Process a single inbound file:
-    1. Read the source file
-    2. Apply field mappings — unmapped canvas columns output blank
-    3. Write transformed output to trfm_outbound
-    4. Save inbound file to PostgreSQL (InboundFileLog)
-    5. Delete inbound file from disk
+    Process a single inbound file based on package type:
+    - passthrough: copy to outbound unchanged
+    - convert: read in input format, write in output format (no column remapping)
+    - transformation: apply field mappings (existing logic)
+
+    All modes:
+    1. Archive original to <pool>/ori/
+    2. Archive processed to <pool>/convert_transform/
+    3. Deliver to delivery directory (e.g. imatch, mpower)
+    4. Log to InboundFileLog
+    5. Delete inbound file
     """
     from .models import Package, InboundFileLog
 
     try:
         package = Package.objects.select_related(
-            'source_file', 'canvas_file'
+            'source_file', 'canvas_file', 'pool_directory', 'delivery_directory',
         ).get(pk=package_id)
     except Package.DoesNotExist:
         return {'error': f'Package {package_id} not found'}
@@ -81,58 +140,74 @@ def process_inbound_file(self, package_id, filepath, original_filename, run_type
     package.save(update_fields=['status', 'updated_at'])
 
     try:
-        # Get ALL canvas headers from the canvas file
-        all_canvas_headers = package.canvas_file.headers_json or []
-
-        # Get field mappings as dict keyed by canvas_header
-        mappings_qs = list(
-            package.field_mappings.all()
-            .order_by('order')
-            .values('source_header', 'canvas_header', 'mapping_type',
-                    'has_condition', 'condition_json', 'constant_value')
-        )
-        mapping_by_canvas = {m['canvas_header']: m for m in mappings_qs}
-
-        # Read source data
-        source_data = _read_file(filepath, original_filename)
-
-        if not source_data:
-            return {'error': 'No data in source file'}
-
-        # Build full mappings list: mapped fields use their config, unmapped → blank
-        full_mappings = []
-        for ch in all_canvas_headers:
-            if ch in mapping_by_canvas:
-                full_mappings.append(mapping_by_canvas[ch])
-            else:
-                # Unmapped canvas column → blank for every row
-                full_mappings.append({
-                    'canvas_header': ch,
-                    'source_header': '',
-                    'mapping_type': 'constant',
-                    'has_condition': False,
-                    'condition_json': None,
-                    'constant_value': '',
-                })
-
-        # Transform: remap columns (includes blanks for unmapped)
-        transformed = _transform_data(source_data, full_mappings)
-
-        # Generate output filename: <prefix><ddmmyyyyhhmmss>.<format>
-        now = timezone.localtime()
-        timestamp = now.strftime('%d%m%Y%H%M%S')
-        output_filename = f'{package.output_prefix}{timestamp}.{package.output_format}'
-        output_path = os.path.join(settings.TRFM_OUTBOUND_DIR, output_filename)
-
-        # Write output
-        _write_file(output_path, transformed, package.output_format)
-
-        # Read inbound file binary content before deleting
+        # Read inbound file binary content for DB storage
         with open(filepath, 'rb') as f:
             file_bytes = f.read()
 
         file_ext = os.path.splitext(original_filename)[1].lower().lstrip('.')
-        rows_processed = len(transformed) - 1  # Exclude header row
+        output_filename = _resolve_output_filename(package, original_filename)
+        ori_dir, ct_dir, delivery_dir = _resolve_dirs(package)
+
+        rows_processed = 0
+
+        if package.package_type == 'passthrough':
+            # ── PASSTHROUGH: copy file unchanged ──
+            shutil.copy2(filepath, os.path.join(ori_dir, original_filename))
+            shutil.copy2(filepath, os.path.join(ct_dir, output_filename))
+            shutil.copy2(filepath, os.path.join(delivery_dir, output_filename))
+
+        elif package.package_type == 'convert':
+            # ── CONVERT: read in input format, write in output format ──
+            shutil.copy2(filepath, os.path.join(ori_dir, original_filename))
+
+            source_data = _read_file(filepath, original_filename)
+            if source_data:
+                # Preserve all columns as-is (no remapping)
+                headers = list(source_data[0].keys()) if source_data else []
+                data_rows = [headers]
+                for row in source_data:
+                    data_rows.append([row.get(h, '') for h in headers])
+                rows_processed = len(source_data)
+
+                _write_file(os.path.join(ct_dir, output_filename), data_rows, package.output_format)
+                _write_file(os.path.join(delivery_dir, output_filename), data_rows, package.output_format)
+
+        elif package.package_type == 'transformation':
+            # ── TRANSFORMATION: apply field mappings ──
+            shutil.copy2(filepath, os.path.join(ori_dir, original_filename))
+
+            all_canvas_headers = package.canvas_file.headers_json or []
+            mappings_qs = list(
+                package.field_mappings.all()
+                .order_by('order')
+                .values('source_header', 'canvas_header', 'mapping_type',
+                        'has_condition', 'condition_json', 'constant_value')
+            )
+            mapping_by_canvas = {m['canvas_header']: m for m in mappings_qs}
+
+            source_data = _read_file(filepath, original_filename)
+            if not source_data:
+                raise ValueError('No data in source file')
+
+            full_mappings = []
+            for ch in all_canvas_headers:
+                if ch in mapping_by_canvas:
+                    full_mappings.append(mapping_by_canvas[ch])
+                else:
+                    full_mappings.append({
+                        'canvas_header': ch,
+                        'source_header': '',
+                        'mapping_type': 'constant',
+                        'has_condition': False,
+                        'condition_json': None,
+                        'constant_value': '',
+                    })
+
+            transformed = _transform_data(source_data, full_mappings)
+            rows_processed = len(transformed) - 1
+
+            _write_file(os.path.join(ct_dir, output_filename), transformed, package.output_format)
+            _write_file(os.path.join(delivery_dir, output_filename), transformed, package.output_format)
 
         # Save inbound file to PostgreSQL
         log_entry = InboundFileLog.objects.create(
@@ -147,13 +222,14 @@ def process_inbound_file(self, package_id, filepath, original_filename, run_type
             status=InboundFileLog.Status.SUCCESS,
         )
 
-        # Auto-create tags for this file log
+        # Auto-create tags
         from .models import FileTag
         auto_tags = [
-            ((file_ext or 'csv').upper(), '#2196F3'),    # File format tag (blue)
-            (package.name, '#FF9800'),                    # Package name tag (orange)
-            (run_type.replace('_', ' ').title(), '#4CAF50'),  # Run type tag (green)
-            ('Success', '#00C853'),                       # Status tag
+            ((file_ext or 'csv').upper(), '#2196F3'),
+            (package.name, '#FF9800'),
+            (run_type.replace('_', ' ').title(), '#4CAF50'),
+            ('Success', '#00C853'),
+            (package.get_package_type_display(), '#9C27B0'),
         ]
         for tag_name, tag_color in auto_tags:
             tag, _ = FileTag.objects.get_or_create(
@@ -165,19 +241,19 @@ def process_inbound_file(self, package_id, filepath, original_filename, run_type
         # Delete inbound file from disk
         os.remove(filepath)
 
-        # Restore package status to active
+        # Restore package status
         package.status = Package.Status.ACTIVE
         package.save(update_fields=['status', 'updated_at'])
 
         return {
             'success': True,
+            'package_type': package.package_type,
             'output_file': output_filename,
             'rows_processed': rows_processed,
             'stored_in_db': True,
         }
 
     except Exception as exc:
-        # Log failure to DB if possible
         try:
             from .models import InboundFileLog
             InboundFileLog.objects.create(
@@ -192,7 +268,6 @@ def process_inbound_file(self, package_id, filepath, original_filename, run_type
         except Exception:
             pass
 
-        # Restore status on failure
         package.status = Package.Status.ACTIVE
         package.save(update_fields=['status', 'updated_at'])
         raise self.retry(exc=exc, countdown=30)

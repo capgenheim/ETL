@@ -6,6 +6,9 @@ from . import views_swift_messages as swift_msg_views
 from . import views_swift_packages as swift_pkg_views
 
 urlpatterns = [
+    # Directory registry
+    path('directories/', views.DirectoryListCreateView.as_view(), name='directory-list-create'),
+
     # File upload & management
     path('upload/', views.FileUploadView.as_view(), name='file-upload'),
     path('files/', views.UploadedFileListView.as_view(), name='file-list'),

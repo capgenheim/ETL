@@ -4,12 +4,48 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import UploadedFile, Package, FieldMapping
+from .models import UploadedFile, Package, FieldMapping, DirectoryRegistry
 from .serializers import (
     UploadedFileSerializer, FileUploadSerializer,
     PackageSerializer, FieldMappingSerializer,
+    DirectoryRegistrySerializer,
 )
 from .services import extract_headers, HeaderExtractionError
+
+
+# ─── Directory Registry ───────────────────────────────────────────────
+
+class DirectoryListCreateView(APIView):
+    """
+    GET:  List registered directories (filter by ?type=pool|delivery)
+    POST: Create a new directory — validates name and creates physical dirs.
+    """
+
+    def get(self, request):
+        qs = DirectoryRegistry.objects.all()
+        dir_type = request.query_params.get('type')
+        if dir_type in ('pool', 'delivery'):
+            qs = qs.filter(dir_type=dir_type)
+        return Response(DirectoryRegistrySerializer(qs, many=True).data)
+
+    def post(self, request):
+        serializer = DirectoryRegistrySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        name = serializer.validated_data['name']
+        dir_type = serializer.validated_data['dir_type']
+
+        # Check duplicate
+        if DirectoryRegistry.objects.filter(name=name, dir_type=dir_type).exists():
+            return Response(
+                {'error': f'Directory "{name}" already exists for type "{dir_type}".'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        directory = serializer.save(created_by=request.user)
+        directory.create_physical_dirs()
+
+        return Response(DirectoryRegistrySerializer(directory).data, status=status.HTTP_201_CREATED)
 
 
 class FileUploadView(APIView):

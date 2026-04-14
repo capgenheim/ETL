@@ -45,8 +45,57 @@ class UploadedFile(models.Model):
         return f'{self.original_filename} ({self.file_type})'
 
 
+class DirectoryRegistry(models.Model):
+    """Tracks registered subdirectories inside trfm_inbound and trfm_outbound.
+    Pool dirs create a mirrored inbound/outbound pair with ori/ and convert_transform/ subdirs.
+    Delivery dirs are final output targets (e.g. imatch, mpower) in trfm_outbound.
+    """
+
+    class DirType(models.TextChoices):
+        POOL = 'pool', 'Pool (Inbound/Outbound Pair)'
+        DELIVERY = 'delivery', 'Delivery Target (Outbound Only)'
+
+    name = models.CharField(max_length=100, help_text='Directory name, e.g. maybank, imatch')
+    dir_type = models.CharField(max_length=10, choices=DirType.choices, db_index=True)
+    is_default = models.BooleanField(default=False, help_text='True for system defaults like imatch/mpower')
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='directories',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ['name', 'dir_type']
+        ordering = ['dir_type', 'name']
+        verbose_name = 'Directory'
+        verbose_name_plural = 'Directories'
+
+    def __str__(self):
+        return f'{self.name} ({self.get_dir_type_display()})'
+
+    def create_physical_dirs(self):
+        """Create the physical directories on disk."""
+        if self.dir_type == self.DirType.POOL:
+            os.makedirs(os.path.join(settings.TRFM_INBOUND_DIR, self.name), exist_ok=True)
+            os.makedirs(os.path.join(settings.TRFM_OUTBOUND_DIR, self.name, 'ori'), exist_ok=True)
+            os.makedirs(os.path.join(settings.TRFM_OUTBOUND_DIR, self.name, 'convert_transform'), exist_ok=True)
+        elif self.dir_type == self.DirType.DELIVERY:
+            os.makedirs(os.path.join(settings.TRFM_OUTBOUND_DIR, self.name), exist_ok=True)
+
+
 class Package(models.Model):
-    """ETL transformation package — defines how source files are mapped to canvas output."""
+    """ETL processing package — supports passthrough, convert, and transformation modes."""
+
+    class PackageType(models.TextChoices):
+        PASSTHROUGH = 'passthrough', 'Passthrough'
+        CONVERT = 'convert', 'Passthrough & Convert'
+        TRANSFORMATION = 'transformation', 'Transformation'
+
+    class FilenameMode(models.TextChoices):
+        ORIGINAL = 'original', 'Keep Original Filename'
+        PREFIX = 'prefix', 'Prefix + Timestamp'
 
     class Status(models.TextChoices):
         INACTIVE = 'inactive', 'Inactive'
@@ -69,6 +118,16 @@ class Package(models.Model):
     ]
 
     name = models.CharField(max_length=255, help_text='Package display name')
+    package_type = models.CharField(
+        max_length=15, choices=PackageType.choices,
+        default=PackageType.TRANSFORMATION, db_index=True,
+        help_text='Processing mode: passthrough, convert, or transformation',
+    )
+    filename_mode = models.CharField(
+        max_length=10, choices=FilenameMode.choices,
+        default=FilenameMode.PREFIX,
+        help_text='Output filename strategy: keep original or generate prefix+timestamp',
+    )
     file_pattern = models.CharField(
         max_length=255,
         help_text='Glob pattern for matching inbound files, e.g. MBB_*.csv',
@@ -78,14 +137,32 @@ class Package(models.Model):
         on_delete=models.PROTECT,
         related_name='packages_as_source',
         limit_choices_to={'file_type': 'source'},
-        help_text='Source file whose headers define the input schema',
+        null=True, blank=True,
+        help_text='Source file whose headers define the input schema (transformation only)',
     )
     canvas_file = models.ForeignKey(
         UploadedFile,
         on_delete=models.PROTECT,
         related_name='packages_as_canvas',
         limit_choices_to={'file_type': 'canvas'},
-        help_text='Canvas file whose headers define the output schema',
+        null=True, blank=True,
+        help_text='Canvas file whose headers define the output schema (transformation only)',
+    )
+    pool_directory = models.ForeignKey(
+        DirectoryRegistry,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='packages_pool',
+        limit_choices_to={'dir_type': 'pool'},
+        help_text='Pool directory in trfm_inbound to monitor (null = root)',
+    )
+    delivery_directory = models.ForeignKey(
+        DirectoryRegistry,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='packages_delivery',
+        limit_choices_to={'dir_type': 'delivery'},
+        help_text='Final delivery target in trfm_outbound (e.g. imatch, mpower)',
     )
     input_format = models.CharField(
         max_length=10, choices=FORMAT_CHOICES, default='csv',
@@ -96,8 +173,8 @@ class Package(models.Model):
         help_text='Format of the transformed output file',
     )
     output_prefix = models.CharField(
-        max_length=255,
-        help_text='Prefix for output filename, e.g. mbbprocess_',
+        max_length=255, blank=True, default='',
+        help_text='Prefix for output filename (used when filename_mode=prefix)',
     )
     batch_mode = models.CharField(
         max_length=10, choices=BatchMode.choices, default=BatchMode.INSTANT,

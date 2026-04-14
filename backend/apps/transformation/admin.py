@@ -1,6 +1,17 @@
 from django.contrib import admin
 from unfold.admin import ModelAdmin, TabularInline
-from .models import UploadedFile, Package, FieldMapping, InboundFileLog, FileTag
+from .models import (
+    UploadedFile, Package, FieldMapping, InboundFileLog,
+    FileTag, DirectoryRegistry,
+)
+
+
+@admin.register(DirectoryRegistry)
+class DirectoryRegistryAdmin(ModelAdmin):
+    list_display = ('name', 'dir_type', 'is_default', 'created_by', 'created_at')
+    list_filter = ('dir_type', 'is_default')
+    search_fields = ('name',)
+    readonly_fields = ('created_at',)
 
 
 @admin.register(FileTag)
@@ -25,8 +36,11 @@ class FieldMappingInline(TabularInline):
 
 @admin.register(Package)
 class PackageAdmin(ModelAdmin):
-    list_display = ('name', 'file_pattern', 'status', 'mapping_status', 'batch_mode', 'created_by', 'created_at')
-    list_filter = ('status', 'mapping_status', 'batch_mode', 'input_format', 'output_format')
+    list_display = (
+        'name', 'package_type', 'file_pattern', 'status', 'mapping_status',
+        'pool_directory', 'delivery_directory', 'batch_mode', 'created_by',
+    )
+    list_filter = ('package_type', 'status', 'mapping_status', 'batch_mode', 'input_format', 'output_format')
     search_fields = ('name', 'file_pattern')
     readonly_fields = ('created_at', 'updated_at')
     inlines = [FieldMappingInline]
@@ -38,4 +52,5 @@ class InboundFileLogAdmin(ModelAdmin):
     list_filter = ('status', 'run_type', 'processed_at')
     search_fields = ('original_filename', 'output_filename')
     readonly_fields = ('file_content', 'processed_at')
+
 

@@ -744,3 +744,281 @@ class TestSwiftPackageAPI(TestCase):
         self.assertEqual(summary['failed'], 1)
         self.assertIsNotNone(summary['last_run'])
 
+
+# ─── Directory Registry API Tests ──────────────────────────────────────
+
+@override_settings(
+    TRFM_INBOUND_DIR=os.path.join(tempfile.mkdtemp(), 'trfm_inbound'),
+    TRFM_OUTBOUND_DIR=os.path.join(tempfile.mkdtemp(), 'trfm_outbound'),
+)
+class TestDirectoryRegistryAPI(TestCase):
+    """Tests for directory list/create endpoint including physical dir creation."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='dirtest', email='dirtest@example.com', password='Test@12345',
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+        # Ensure base dirs exist
+        from django.conf import settings
+        os.makedirs(settings.TRFM_INBOUND_DIR, exist_ok=True)
+        os.makedirs(settings.TRFM_OUTBOUND_DIR, exist_ok=True)
+
+    def test_list_directories_empty(self):
+        resp = self.client.get('/api/transformation/directories/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 0)
+
+    def test_create_delivery_directory(self):
+        resp = self.client.post('/api/transformation/directories/', {
+            'name': 'imatch', 'dir_type': 'delivery',
+        })
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['name'], 'imatch')
+        self.assertEqual(resp.data['dir_type'], 'delivery')
+
+    def test_create_delivery_creates_physical_dir(self):
+        from django.conf import settings
+        self.client.post('/api/transformation/directories/', {
+            'name': 'testdelivery', 'dir_type': 'delivery',
+        })
+        self.assertTrue(os.path.isdir(os.path.join(settings.TRFM_OUTBOUND_DIR, 'testdelivery')))
+
+    def test_create_pool_directory(self):
+        resp = self.client.post('/api/transformation/directories/', {
+            'name': 'maybank', 'dir_type': 'pool',
+        })
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['name'], 'maybank')
+        self.assertEqual(resp.data['dir_type'], 'pool')
+
+    def test_create_pool_mirrors_outbound(self):
+        """Pool creation must create inbound/<name>, outbound/<name>/ori, outbound/<name>/convert_transform."""
+        from django.conf import settings
+        self.client.post('/api/transformation/directories/', {
+            'name': 'cimb', 'dir_type': 'pool',
+        })
+        self.assertTrue(os.path.isdir(os.path.join(settings.TRFM_INBOUND_DIR, 'cimb')))
+        self.assertTrue(os.path.isdir(os.path.join(settings.TRFM_OUTBOUND_DIR, 'cimb', 'ori')))
+        self.assertTrue(os.path.isdir(os.path.join(settings.TRFM_OUTBOUND_DIR, 'cimb', 'convert_transform')))
+
+    def test_duplicate_name_rejected(self):
+        self.client.post('/api/transformation/directories/', {
+            'name': 'duplicate', 'dir_type': 'delivery',
+        })
+        resp = self.client.post('/api/transformation/directories/', {
+            'name': 'duplicate', 'dir_type': 'delivery',
+        })
+        self.assertEqual(resp.status_code, 400)
+
+    def test_invalid_name_rejected(self):
+        resp = self.client.post('/api/transformation/directories/', {
+            'name': 'My Dir!@#', 'dir_type': 'pool',
+        })
+        self.assertEqual(resp.status_code, 400)
+
+    def test_list_filter_by_type(self):
+        self.client.post('/api/transformation/directories/', {'name': 'pool1', 'dir_type': 'pool'})
+        self.client.post('/api/transformation/directories/', {'name': 'del1', 'dir_type': 'delivery'})
+        resp = self.client.get('/api/transformation/directories/?type=delivery')
+        self.assertEqual(resp.status_code, 200)
+        names = [d['name'] for d in resp.data]
+        self.assertIn('del1', names)
+        self.assertNotIn('pool1', names)
+
+
+# ─── Package Type API Tests ────────────────────────────────────────────
+
+class TestPackageTypeAPI(TestCase):
+    """Tests for package creation with different package_type values."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='pkgtype', email='pkgtype@example.com', password='Test@12345',
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+        # Create source and canvas files for transformation packages
+        self.source = UploadedFile.objects.create(
+            file_type='source', original_filename='src.csv', file_format='csv',
+            headers_json=['A', 'B'], field_count=2, uploaded_by=self.user,
+        )
+        self.canvas = UploadedFile.objects.create(
+            file_type='canvas', original_filename='canvas.csv', file_format='csv',
+            headers_json=['X', 'Y'], field_count=2, uploaded_by=self.user,
+        )
+
+    def _base_payload(self, **overrides):
+        payload = {
+            'name': 'Test Pkg', 'file_pattern': '*.csv',
+            'package_type': 'transformation',
+            'filename_mode': 'prefix',
+            'input_format': 'csv', 'output_format': 'csv',
+            'output_prefix': 'test_', 'batch_mode': 'instant',
+            'source_file': self.source.id, 'canvas_file': self.canvas.id,
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_create_transformation_package(self):
+        resp = self.client.post('/api/transformation/packages/create/',
+                                self._base_payload(), format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['package_type'], 'transformation')
+
+    def test_create_passthrough_package(self):
+        resp = self.client.post('/api/transformation/packages/create/',
+                                self._base_payload(
+                                    package_type='passthrough',
+                                    source_file=None, canvas_file=None,
+                                ), format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['package_type'], 'passthrough')
+
+    def test_create_convert_package(self):
+        resp = self.client.post('/api/transformation/packages/create/',
+                                self._base_payload(
+                                    package_type='convert',
+                                    source_file=None, canvas_file=None,
+                                    input_format='csv', output_format='xlsx',
+                                    output_prefix='conv_',
+                                ), format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['package_type'], 'convert')
+
+    def test_convert_same_format_rejected(self):
+        resp = self.client.post('/api/transformation/packages/create/',
+                                self._base_payload(
+                                    package_type='convert',
+                                    source_file=None, canvas_file=None,
+                                    input_format='csv', output_format='csv',
+                                ), format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('output_format', resp.data)
+
+    def test_convert_to_xls_rejected(self):
+        resp = self.client.post('/api/transformation/packages/create/',
+                                self._base_payload(
+                                    package_type='convert',
+                                    source_file=None, canvas_file=None,
+                                    input_format='csv', output_format='xls',
+                                ), format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('output_format', resp.data)
+
+    def test_transformation_requires_source_file(self):
+        resp = self.client.post('/api/transformation/packages/create/',
+                                self._base_payload(source_file=None), format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_transformation_requires_canvas_file(self):
+        resp = self.client.post('/api/transformation/packages/create/',
+                                self._base_payload(canvas_file=None), format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_passthrough_no_source_canvas_ok(self):
+        resp = self.client.post('/api/transformation/packages/create/',
+                                self._base_payload(
+                                    package_type='passthrough',
+                                    source_file=None, canvas_file=None,
+                                ), format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertIsNone(resp.data['source_file'])
+        self.assertIsNone(resp.data['canvas_file'])
+
+    def test_filename_mode_original(self):
+        resp = self.client.post('/api/transformation/packages/create/',
+                                self._base_payload(
+                                    package_type='passthrough',
+                                    source_file=None, canvas_file=None,
+                                    filename_mode='original',
+                                ), format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['filename_mode'], 'original')
+
+    def test_pool_directory_assignment(self):
+        from apps.transformation.models import DirectoryRegistry
+        pool = DirectoryRegistry.objects.create(
+            name='testpool', dir_type='pool', created_by=self.user,
+        )
+        resp = self.client.post('/api/transformation/packages/create/',
+                                self._base_payload(
+                                    package_type='passthrough',
+                                    source_file=None, canvas_file=None,
+                                    pool_directory=pool.id,
+                                ), format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['pool_directory'], pool.id)
+
+
+# ─── Directory Routing Tests ──────────────────────────────────────────
+
+class TestDirectoryRouting(TestCase):
+    """Tests for API routing and serializer output of directory-related fields."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='routing', email='routing@example.com', password='Test@12345',
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def test_list_directories_route(self):
+        resp = self.client.get('/api/transformation/directories/')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_create_directory_route(self):
+        resp = self.client.post('/api/transformation/directories/', {
+            'name': 'routetest', 'dir_type': 'delivery',
+        })
+        self.assertEqual(resp.status_code, 201)
+
+    def test_package_serializer_includes_dir_names(self):
+        from apps.transformation.models import DirectoryRegistry
+        delivery = DirectoryRegistry.objects.create(
+            name='mpower', dir_type='delivery', is_default=True, created_by=self.user,
+        )
+        source = UploadedFile.objects.create(
+            file_type='source', original_filename='s.csv', file_format='csv',
+            headers_json=['A'], field_count=1, uploaded_by=self.user,
+        )
+        canvas = UploadedFile.objects.create(
+            file_type='canvas', original_filename='c.csv', file_format='csv',
+            headers_json=['X'], field_count=1, uploaded_by=self.user,
+        )
+        self.client.post('/api/transformation/packages/create/', {
+            'name': 'Dir Test', 'file_pattern': '*.csv',
+            'package_type': 'transformation',
+            'filename_mode': 'prefix',
+            'source_file': source.id, 'canvas_file': canvas.id,
+            'delivery_directory': delivery.id,
+            'input_format': 'csv', 'output_format': 'csv',
+            'output_prefix': 'test_', 'batch_mode': 'instant',
+        }, format='json')
+        resp = self.client.get('/api/transformation/packages/')
+        self.assertEqual(resp.status_code, 200)
+        pkg = resp.data[0]
+        self.assertEqual(pkg['delivery_directory_name'], 'mpower')
+        self.assertIn('package_type_display', pkg)
+
+    def test_package_create_with_dirs(self):
+        from apps.transformation.models import DirectoryRegistry
+        pool = DirectoryRegistry.objects.create(name='bankpool', dir_type='pool', created_by=self.user)
+        delivery = DirectoryRegistry.objects.create(name='imatch', dir_type='delivery', created_by=self.user)
+        resp = self.client.post('/api/transformation/packages/create/', {
+            'name': 'Full Dir Pkg', 'file_pattern': '*.csv',
+            'package_type': 'passthrough',
+            'filename_mode': 'original',
+            'pool_directory': pool.id,
+            'delivery_directory': delivery.id,
+            'input_format': 'csv', 'output_format': 'csv',
+            'output_prefix': '', 'batch_mode': 'instant',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['pool_directory'], pool.id)
+        self.assertEqual(resp.data['delivery_directory'], delivery.id)
+        self.assertEqual(resp.data['pool_directory_name'], 'bankpool')
+        self.assertEqual(resp.data['delivery_directory_name'], 'imatch')
+
